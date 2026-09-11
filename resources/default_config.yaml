@@ -1,0 +1,209 @@
+# =============================================================================
+# TaxaTag settings
+# =============================================================================
+# Everything the graphical interface can set is also in this file, so a run
+# can be reproduced from the command line or on a computing cluster:
+#
+#     python taxatag.py --config config.yaml
+#
+# The interface writes your own copy of this file into your user folder, so
+# editing here is only needed if you prefer text to buttons.
+# =============================================================================
+
+project:
+  name: "TaxaTag eDNA Analysis"
+  version: "1.0.0"
+
+# -----------------------------------------------------------------------------
+# Where things are
+# -----------------------------------------------------------------------------
+paths:
+  # The folder holding your sequencing files (.fastq, .fastq.gz, or SRA files
+  # downloaded from NCBI). Paired files are matched up automatically.
+  input_dir: "path/to/input"
+
+  # Results go here. Each run creates its own dated subfolder under runs/,
+  # so an earlier run is never overwritten.
+  output_base: "path/to/output"
+
+  # A TaxaTag reference library: the folder holding
+  # taxatag_reference_core.db and a blast_volumes/ folder. Used when
+  # blast_mode is "reference", which is the fastest option by a wide margin
+  # and needs no internet connection.
+  reference_dir: ""
+
+  # Any other BLAST database on this computer, such as a copy of NCBI's nt.
+  # Give the name without a file extension, e.g. "C:/blastdb/nt" rather than
+  # "C:/blastdb/nt.ndb". Only used when blast_mode is "local".
+  blast_db: ""
+
+  # Species lineages already looked up are remembered here, so repeat runs
+  # need far fewer requests to NCBI.
+  taxonomy_cache: "cache/taxonomy_cache.json"
+
+# -----------------------------------------------------------------------------
+# How the run behaves
+# -----------------------------------------------------------------------------
+runtime:
+  # CPU cores to use. 0 means use them all.
+  threads: 0
+
+  # Convert SRA files to FASTQ before analysing. Leave on unless your data is
+  # already in FASTQ format.
+  convert_sra: true
+
+  # Delete previous runs before starting. Off by default: every run normally
+  # goes into its own dated folder so nothing is lost.
+  clean_output: false
+
+  # Join the forward and reverse read of each pair into one sequence covering
+  # the whole marker. This identifies species more reliably. Set to false only
+  # to match an older analysis that used the forward read on its own.
+  merge_reads: true
+
+  # The smallest overlap, in bases, that two reads may be joined on.
+  min_merge_overlap: 10
+
+  # Discard sequences outside the min_len/max_len window set for their primer
+  # set. Off by default, because those figures usually describe the amplicon
+  # with its primers still attached, which is longer than what survives
+  # trimming. Each run reports the lengths actually seen; check those before
+  # switching this on.
+  apply_length_filter: false
+
+  # Where to look sequences up.
+  #   "reference" - a TaxaTag reference library at paths.reference_dir. Each
+  #                 marker is searched against its own reference sequences,
+  #                 and species names come from the library's own catalogue,
+  #                 so no internet connection is needed at any point.
+  #   "remote"    - NCBI over the internet. Nothing to install, but slow and
+  #                 subject to however busy their servers are.
+  #   "local"     - any other BLAST database, at paths.blast_db.
+  blast_mode: "remote"
+
+  # How many database matches to consider per sequence; the strongest is used.
+  # Do not set this to 1. BLAST applies the limit while it searches rather than
+  # after ranking the results, so asking for a single hit can return one that
+  # is not the best match, and sometimes returns nothing at all.
+  blast_max_target_seqs: 10
+
+  # Matches weaker than this are not reported at all.
+  blast_evalue: 1.0e-5
+
+  # How many sequences go to NCBI in one submission, when blast_mode is
+  # "remote". Their public interface is built for interactive-scale queries;
+  # a single job of hundreds gives no progress, no partial results, and
+  # nothing for a retry to react to when it stalls. Ignored for local
+  # searches, where one search of everything is fastest.
+  blast_chunk_size: 100
+
+  # Minutes to wait for one submission before giving up on it and retrying.
+  # An estimate rather than a measurement: a healthy NCBI queue returns a
+  # hundred sequences in roughly twenty minutes, plus fifteen per cent for a
+  # busy one. Scaled by the actual chunk size. Raise it if searches are being
+  # abandoned while NCBI is merely slow rather than stuck.
+  blast_timeout_minutes: 23.0
+
+# -----------------------------------------------------------------------------
+# Identifying yourself to NCBI
+# -----------------------------------------------------------------------------
+resources:
+  # NCBI ask for an email address so they can get in touch if a search causes
+  # them trouble. It is sent only to NCBI.
+  ncbi_email: ""
+  ncbi_tool: "taxatag_pipeline"
+
+# -----------------------------------------------------------------------------
+# How confident a match has to be
+# -----------------------------------------------------------------------------
+thresholds:
+  # How close a database match must be before a name is trusted at each level.
+  # Anything below the family figure is reported as unidentified rather than
+  # guessed at.
+  min_identity:
+    species: 99.0
+    genus: 97.0
+    family: 95.0
+
+  # A sequence must be seen at least this many times in a sample before it is
+  # treated as real rather than as sequencing error.
+  min_zotu_size: 8
+
+  # The smallest share of your sequence that must take part in the alignment
+  # for a match to count. This matters as much as the identity figures above:
+  # BLAST reports a fragment matching 55 bases of a 250-base sequence as 100%
+  # identical, and without this that becomes a confident but false species
+  # call. 90 is a sensible default; lower it only if your sequences are
+  # expected to be partial.
+  min_query_coverage: 90.0
+
+  # How much of the equally-good reference sequences must agree before a name
+  # is given, as a fraction. A short marker sequence often matches many
+  # references at exactly the same score, and they do not always agree about
+  # what the organism is: in testing, one sequence tied against fourteen
+  # references of which ten were a mite, three were snails and one a spider.
+  # Below this level of agreement the sequence is reported at a coarser rank,
+  # or left unidentified, rather than given whichever name came first.
+  consensus_threshold: 0.9
+
+# -----------------------------------------------------------------------------
+# Primer sets
+# -----------------------------------------------------------------------------
+# One entry per region you amplified. TaxaTag looks for all of them in every
+# sample and works out on its own which marker each sample was sequenced with,
+# so a mixed batch can be analysed in a single run.
+#
+# "marker" says which gene the primers amplify: 12S, 16S, COI or 18S. It
+# decides which part of a reference library the sequences are searched
+# against. If left out it is worked out from the name, so "MiFish_12S" gives
+# 12S; set it explicitly when the name does not make that obvious.
+#
+# forward_rc and reverse_rc are the reverse complements of the two primers.
+# The graphical interface fills these in for you; if you write them by hand,
+# remember that ambiguity codes complement too (R becomes Y, not R).
+# -----------------------------------------------------------------------------
+loci:
+  - name: "MiFish_12S"
+    marker: "12S"         # which reference sequences to search against
+    min_len: 163          # shortest expected amplicon, in bases
+    max_len: 185          # longest expected amplicon, in bases
+    q_score: 20           # trim bases below this quality off the read ends
+    error_rate: 0.15      # how much of a primer may differ and still match
+    abundance_filter: 0.0002   # smallest share of a sample worth reporting
+    primers:
+      forward: "GTCGGTAAAACTCGTGCCAGC"
+      reverse: "CATAGTGGGGTATCTAATCCCAGTTTG"
+      forward_rc: "GCTGGCACGAGTTTTACCGAC"
+      reverse_rc: "CAAACTGGGATTAGATACCCCACTATG"
+
+  - name: "MarVer3_16S"
+    marker: "16S"
+    # Measured across 81 coastal water samples: median 220 bases after
+    # trimming and merging, sample medians 189-230. None fell inside the
+    # 232-274 window usually quoted for this pair, which describes the
+    # amplicon with its primers still attached.
+    min_len: 185
+    max_len: 240
+    q_score: 15
+    error_rate: 0.20
+    abundance_filter: 0.00025
+    primers:
+      forward: "AGACGAGAAGACCCTRTG"
+      reverse: "GGATTGCGCTGTTATCCC"
+      forward_rc: "CAYAGGGTCTTCTCGTCT"
+      reverse_rc: "GGGATAACAGCGCAATCC"
+
+  # Add more primer sets by copying the pattern above. For example, COI:
+  #
+  # - name: "COI_Leray"
+  #   marker: "COI"
+  #   min_len: 300
+  #   max_len: 320
+  #   q_score: 20
+  #   error_rate: 0.15
+  #   abundance_filter: 0.0002
+  #   primers:
+  #     forward: "GGWACWGGWTGAACWGTWTAYCCYCC"
+  #     reverse: "TAAACTTCAGGGTGACCAAARAAYCA"
+  #     forward_rc: "GGRGGRTAWACWGTTCAWCCWGTWCC"
+  #     reverse_rc: "TGRTTYTTTGGTCACCCTGAAGTTTA"

@@ -1,0 +1,110 @@
+# What belongs in version control is the source, the tests and the
+# documentation - about 1.6 MB. Everything below is either vendor binaries,
+# reference data, or something a command can regenerate, and together it comes
+# to roughly 11 GB. Git stores every version of every file it has ever seen
+# forever, so a large file committed once is a large file committed always,
+# even after it is deleted.
+#
+# Where an excluded thing is needed to build or run, docs/protocols say how to
+# get it. Nothing here is required to read, test or review the code.
+
+# ---------------------------------------------------------------- Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ------------------------------------------------- Vendor tools (3.9 GB)
+# VSEARCH, the BLAST suite, the SRA toolkit and an embedded interpreter, one
+# copy per platform. They are third-party releases downloaded whole, not
+# something this project authors, and the build fetches them per platform.
+# See docs/protocols/building-a-release.md.
+/bin/
+
+# -------------------------------------------- Reference libraries (5+ GB)
+# A library is built, not written: hours of work from sources measured in
+# gigabytes, and reproducible from docs/protocols/reference-data.md. This
+# folder is usually a link to one kept elsewhere.
+#
+# Anchored with a leading slash. Without it this also matched
+# src/reference/, and the first commit went in missing that whole package.
+/reference/
+
+# ------------------------------------------------------- Data and output
+# Sequencing files under test, and everything any run has ever produced.
+/test_data/
+/test_output/
+/output/
+runs/
+/cache/
+/data/
+*.log
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+
+# ...except the self-test's own reads, which are 12 KB, ship inside the
+# application and are the thing it tests with. Excluding them leaves a
+# manifest describing data that is not there, and a self-test that reports a
+# broken installation on every fresh clone. Caught by tests/test_packaging.py.
+!resources/selftest/*.fastq.gz
+
+# ------------------------------------------------------------- Builds
+/build/
+/dist/
+
+# ------------------------------------------------------ Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ------------------------------------------------------------- Accidents
+# Created by running a command with its example path left in place.
+/path/
+dist/installer/
+
+# A library archive staged for upload. Around 700 MB, and the whole reason
+# the library is a download rather than part of the release - so it must
+# never end up in the history that release is built from.
+/Zenodo Database/
+
+# ------------------------------------------------------- Working, not shipped
+# Kept on this machine and out of the repository. The attic holds superseded
+# copies of modules that now live in src/, and test_config.yaml is a scratch
+# settings file pointing at one developer's folders. Neither is referenced by
+# anything; both are the first thing a visitor to the repository root sees.
+/_attic/
+/test_config.yaml
+
+# ------------------------------------------- Downloadable content, staged here
+# "Additional Content/" is a clone of the public content repository, and
+# "Additional Content Subscriber/" is its paid counterpart. Both sit inside
+# this folder for convenience and hold multi-gigabyte archives; neither
+# belongs in this history. Note the nested .git: without these lines,
+# `git add -A` records the clone as a gitlink to a commit no one else has.
+/Additional Content/
+/Additional Content Subscriber/
+
+# ------------------------------------------ Not published, but not secret
+# GPL-3 asks for the "Corresponding Source": what is needed to generate,
+# install, run and modify the program. That is src/, resources/, installer/
+# and the scripts that build it - all tracked above.
+#
+# These are separate works, and publishing them is a choice rather than an
+# obligation. The choice here is not to. A public repository exists so that
+# somebody can get the installer and, if they wish, the code; the test
+# suite, the developer tooling and the engineering notes make that harder to
+# find rather than easier, and the reasoning in them is ours.
+#
+# NONE OF THIS IS REPRODUCIBLE FROM THE REMOTE. A fresh clone is a correct
+# and complete checkout containing none of it, so it must be backed up with
+# Data/ and Writing/ rather than with the repository. tests/test_packaging.py
+# checks both directions: that nothing here is tracked, and that none of it
+# has quietly gone missing.
+/tests/
+/tools/
+/dev-notes/
+/docs/

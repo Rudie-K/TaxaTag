@@ -1,0 +1,156 @@
+{
+  "generated": "2026-09-08",
+  "min_zotu_size": 8,
+  "reads_per_species": 60,
+  "samples": {
+    "12S": {
+      "expect_taxa": [
+        {
+          "accession": "12S_171841",
+          "genus": "Acropoma",
+          "species": "Acropoma hanedai"
+        },
+        {
+          "accession": "12S_146448",
+          "genus": "Anchoa",
+          "species": "Anchoa hepsetus"
+        },
+        {
+          "accession": "12S_30131",
+          "genus": "Apogon",
+          "species": "Apogon planifrons"
+        }
+      ],
+      "expect_zotus": 3,
+      "locus": {
+        "abundance_filter": 0.0002,
+        "enabled": true,
+        "error_rate": 0.15,
+        "marker": "12S",
+        "max_len": 185,
+        "min_len": 163,
+        "name": "MiFish_12S",
+        "primers": {
+          "forward": "GTCGGTAAAACTCGTGCCAGC",
+          "forward_rc": "GCTGGCACGAGTTTTACCGAC",
+          "reverse": "CATAGTGGGGTATCTAATCCCAGTTTG",
+          "reverse_rc": "CAAACTGGGATTAGATACCCCACTATG"
+        },
+        "q_score": 20
+      },
+      "sample": "selftest-12S"
+    },
+    "16S": {
+      "expect_taxa": [
+        {
+          "accession": "16S_517",
+          "genus": "Albula",
+          "species": "Albula glossodonta"
+        },
+        {
+          "accession": "16S_546",
+          "genus": "Anguilla",
+          "species": "Anguilla anguilla"
+        },
+        {
+          "accession": "16S_1633",
+          "genus": "Conger",
+          "species": "Conger japonicus"
+        }
+      ],
+      "expect_zotus": 3,
+      "locus": {
+        "abundance_filter": 0.00025,
+        "enabled": true,
+        "error_rate": 0.2,
+        "marker": "16S",
+        "max_len": 240,
+        "min_len": 185,
+        "name": "MarVer3_16S",
+        "primers": {
+          "forward": "AGACGAGAAGACCCTRTG",
+          "forward_rc": "CAYAGGGTCTTCTCGTCT",
+          "reverse": "GGATTGCGCTGTTATCCC",
+          "reverse_rc": "GGGATAACAGCGCAATCC"
+        },
+        "q_score": 15
+      },
+      "sample": "selftest-16S"
+    },
+    "18S": {
+      "expect_taxa": [
+        {
+          "accession": "18S_43",
+          "genus": "Alexandrium",
+          "species": "Alexandrium catenella"
+        },
+        {
+          "accession": "18S_391",
+          "genus": "Amastigomonas",
+          "species": "Amastigomonas mutabilis"
+        },
+        {
+          "accession": "18S_53",
+          "genus": "Andalucia",
+          "species": "Andalucia godoyi"
+        }
+      ],
+      "expect_zotus": 3,
+      "locus": {
+        "abundance_filter": 0.0002,
+        "enabled": true,
+        "error_rate": 0.15,
+        "marker": "18S",
+        "max_len": 500,
+        "min_len": 350,
+        "name": "18S_V4",
+        "primers": {
+          "forward": "CCAGCASCYGCGGTAATTCC",
+          "forward_rc": "GGAATTACCGCRGSTGCTGG",
+          "reverse": "ACTTTCGTTCTTGATYRA",
+          "reverse_rc": "TYRATCAAGAACGAAAGT"
+        },
+        "q_score": 20
+      },
+      "sample": "selftest-18S"
+    },
+    "COI": {
+      "expect_taxa": [
+        {
+          "accession": "COI_93980",
+          "genus": "Abudefduf",
+          "species": "Abudefduf sordidus"
+        },
+        {
+          "accession": "COI_108513",
+          "genus": "Acanthocybium",
+          "species": "Acanthocybium solandri"
+        },
+        {
+          "accession": "COI_29606",
+          "genus": "Acanthurus",
+          "species": "Acanthurus bahianus"
+        }
+      ],
+      "expect_zotus": 3,
+      "locus": {
+        "abundance_filter": 0.0002,
+        "enabled": true,
+        "error_rate": 0.15,
+        "marker": "COI",
+        "max_len": 330,
+        "min_len": 290,
+        "name": "COI_Leray",
+        "primers": {
+          "forward": "GGWACWGGWTGAACWGTWTAYCCYCC",
+          "forward_rc": "GGRGGRTAWACWGTTCAWCCWGTWCC",
+          "reverse": "TANACYTCNGGRTGNCCRAARAAYCA",
+          "reverse_rc": "TGRTTYTTYGGNCAYCCNGARGTNTA"
+        },
+        "q_score": 20
+      },
+      "sample": "selftest-COI"
+    }
+  },
+  "source_library": "marine_core"
+}

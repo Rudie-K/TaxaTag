@@ -1,0 +1,37 @@
+TaxaTag - environmental DNA to species
+
+This installs the TaxaTag application, about 430 MB.
+
+IT DOES NOT INSTALL A REFERENCE LIBRARY.
+
+A reference library is the collection of known sequences TaxaTag compares your
+data against. It is around 2 GB, it is data rather than program, and it is
+downloaded separately - from inside TaxaTag, once it is running.
+
+You do not need one to check that TaxaTag works. Press "Test the analysis
+pipeline" on the Run tab after installing: it analyses four small samples that come with
+the program and whose contents are known, and tells you whether the right
+answer came back. It takes about fifteen seconds and needs no internet
+connection.
+
+You will need a library before analysing your own data, or you can point
+TaxaTag at NCBI over the internet instead, which needs no setup but is slower.
+
+---
+
+TaxaTag is free software under the GNU General Public License, version 3. You
+may use it for anything, including commercial work, and you may change it and
+pass it on. The next page has the full terms.
+
+THE NAME AND LOGO ARE NOT COVERED BY THAT LICENCE.
+
+"TaxaTag" and its logo are (C) 2026 Rudie Kauhanen, Lucy Thomas and Ruth
+Farrant, all rights reserved. You may use them freely to refer to this
+program - cite it, show it, teach with it. What is not permitted is releasing
+a modified version under this name or mark: give a fork a name of its own, so
+that nobody mistakes its results for these. The GPL allows this in its
+section 7(e), and BRANDING.md installed alongside the program has the full
+terms.
+
+It is built on Cutadapt, VSEARCH, NCBI BLAST and the NCBI Taxonomy database.
+Please cite those alongside TaxaTag in published work.

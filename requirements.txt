@@ -1,0 +1,23 @@
+# TaxaTag Python dependencies
+# Install with:  pip install -r requirements.txt
+
+# --- Core ---------------------------------------------------------------
+pandas>=2.0.0          # results tables
+pyyaml>=6.0            # settings files
+requests>=2.31.0       # talking to NCBI
+
+# --- Graphical interface -----------------------------------------------
+PyQt6>=6.5.0
+
+# --- Bioinformatics -----------------------------------------------------
+# Cutadapt is a Python package, so it installs with everything else.
+# VSEARCH, BLAST and the SRA Toolkit are separate programs and ship inside
+# the bin/ folder rather than being installed from here.
+cutadapt>=4.0
+
+# --- Building a standalone release -------------------------------------
+pyinstaller>=6.0
+
+# Only needed to redraw the application icon (resources/make_icon.py).
+# Not required to run or to build TaxaTag.
+pillow>=10.0
