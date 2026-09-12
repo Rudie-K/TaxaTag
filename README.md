@@ -151,6 +151,12 @@ The file containing the results will be in its respective run folder as `05_resu
 one row per taxon, per sample, with the evidence beside it. The **"Save a copy of this table"** button writes
 whatever you are looking at, optional filters included.
 
+A species table is something you read for a long time. If a white window is
+hard on your eyes, the **Display** group at the top of the Settings tab has a
+dark scheme; by default TaxaTag follows whatever your computer is set to.
+
+![The window in the dark scheme](resources/screenshot-dark.png)
+
 ---
 
 ## Keeping it up to date
