@@ -15,6 +15,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -38,6 +39,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src.gui import theme
 from src.gui.primers import PrimerSetPanel, complete_locus, top_up_with_presets
 from src.gui.results import ResultsPanel
 from src.gui.widgets import CheckListView, HelpLabel, LogView, PathPicker
@@ -77,6 +79,11 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_body()
         self._load_settings()
+        # So that "Match my computer" keeps matching it while the window
+        # is open, rather than only at launch.
+        QApplication.instance().styleHints().colorSchemeChanged.connect(
+            self._system_scheme_changed
+        )
         self._refresh_resume()
         self.results_panel.set_results_folder(self.output_picker.value())
         self.statusBar().showMessage("Ready")
@@ -370,7 +377,60 @@ class MainWindow(QMainWindow):
 
         return _padded(splitter)
 
+    def _build_display_group(self) -> QGroupBox:
+        """
+        How the window looks. First on the page, before the science, because
+        somebody who needs a darker screen needs it before they can read
+        the rest of the page.
+
+        Not part of the settings file: it is kept per user, not per project,
+        and `apply_config` / `current_config` do not know it exists.
+        """
+        display = QGroupBox("Display")
+        self.scheme_choice = QComboBox()
+        for label, choice in (
+            ("Match my computer", theme.SYSTEM),
+            ("Light", theme.LIGHT),
+            ("Dark", theme.DARK),
+        ):
+            self.scheme_choice.addItem(label, choice)
+        self.scheme_choice.setCurrentIndex(
+            max(0, self.scheme_choice.findData(theme.saved_choice()))
+        )
+        self.scheme_choice.currentIndexChanged.connect(self._scheme_chosen)
+
+        form = QFormLayout(display)
+        form.addRow("Colour scheme", self.scheme_choice)
+        form.addRow(
+            HelpLabel(
+                "Changes straight away. \"Match my computer\" follows the setting "
+                "in Windows or macOS, so the window goes dark when the rest of "
+                "the desktop does."
+            )
+        )
+        return display
+
+    def _scheme_chosen(self, _index: int) -> None:
+        choice = self.scheme_choice.currentData()
+        theme.save_choice(choice)
+        self._apply_scheme()
+
+    def _apply_scheme(self) -> None:
+        """Put the chosen scheme on screen, including what the stylesheet
+        cannot reach: lines already written into the log and check list."""
+        app = QApplication.instance()
+        theme.apply(app, theme.resolve(theme.saved_choice()))
+        self.log_view.repaint_lines()
+        self.check_view.repaint_lines()
+
+    def _system_scheme_changed(self, _scheme) -> None:
+        # Only matters when following the system; a fixed choice ignores it.
+        if theme.saved_choice() == theme.SYSTEM:
+            self._apply_scheme()
+
     def _build_settings_tab(self) -> QWidget:
+        display = self._build_display_group()
+
         # --- reading the data -------------------------------------------
         reading = QGroupBox("Reading your files")
         self.convert_sra = QCheckBox("Convert SRA files downloaded from NCBI")
@@ -513,7 +573,7 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setSpacing(10)
-        for group in (reading, processing, identification, housekeeping):
+        for group in (display, reading, processing, identification, housekeeping):
             content_layout.addWidget(group)
         content_layout.addStretch(1)
 
@@ -1280,7 +1340,7 @@ class MainWindow(QMainWindow):
             "licence: all rights in them are reserved. Use them freely "
             "to refer to this program - cite it, show it, teach with "
             "it - but give a modified version a name of its own.</p>"
-            f"<p style='color:#57606a;'>Settings file:<br>{self.config_path}</p>",
+            f"<p style='color:{theme.active()['muted']};'>Settings file:<br>{self.config_path}</p>",
         )
 
     #: Remembers that the offer has been made, so it is made once.

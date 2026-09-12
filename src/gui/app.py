@@ -11,8 +11,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
+from src.gui import theme
 from src.gui.main_window import APP_NAME, MainWindow
-from src.gui.theme import STYLESHEET
 from src.utils import platform as platform_utils
 from src.utils import paths
 
@@ -39,7 +39,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("TaxaTag")
     app.setStyle("Fusion")
-    app.setStyleSheet(STYLESHEET)
+    # Before the window exists, so nothing is ever drawn in the wrong scheme
+    # and then redrawn. Organisation and application names must already be
+    # set - QSettings keys on them.
+    theme.apply(app, theme.resolve(theme.saved_choice()))
 
     icon = _icon()
     if icon:

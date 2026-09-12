@@ -8,6 +8,7 @@ layout rather than a wall of widget plumbing.
 
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 
 from src.utils import paths
@@ -27,15 +28,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-#: Colours for each kind of log line, chosen to stay readable on a light panel.
-LOG_COLOURS = {
-    "heading": "#1a4d7a",
-    "info": "#24292f",
-    "debug": "#6e7781",
-    "success": "#116329",
-    "warning": "#9a5b00",
-    "error": "#b21f2d",
-}
+from src.gui import theme
+
+#: The kinds of log line. Their colours live in the palette, one set per
+#: scheme, under `log_<level>` - here they were a second dictionary and the
+#: one most likely to be left light when the rest went dark.
+LOG_LEVELS = ("heading", "info", "debug", "success", "warning", "error")
+
+
+def log_colour(level: str) -> str:
+    """The colour for a log line of this level, in the scheme on screen."""
+    palette = theme.active()
+    return palette.get(f"log_{level}", palette["log_info"])
 
 
 class PathPicker(QWidget):
@@ -221,6 +225,11 @@ class LogView(QTextEdit):
         self.setReadOnly(True)
         self.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.document().setMaximumBlockCount(self.MAX_BLOCKS)
+        # What has been written, with its level. A line's colour is baked
+        # into the document as it is appended, so a change of scheme cannot
+        # reach it through the stylesheet; this is what `repaint_lines`
+        # rebuilds from. Capped the same way the document is.
+        self._lines: deque = deque(maxlen=self.MAX_BLOCKS)
 
         font = QFont("Consolas" if _has_font("Consolas") else "Monospace")
         font.setStyleHint(QFont.StyleHint.Monospace)
@@ -229,11 +238,21 @@ class LogView(QTextEdit):
         self.setObjectName("logView")
 
     def append_line(self, text: str, level: str = "info") -> None:
+        self._lines.append((text, level))
+        self._write(text, level)
+
+        # Only follow the tail when the user is already at the bottom, so
+        # scrolling back to read something is not yanked away from them.
+        scrollbar = self.verticalScrollBar()
+        if scrollbar.value() >= scrollbar.maximum() - 40:
+            scrollbar.setValue(scrollbar.maximum())
+
+    def _write(self, text: str, level: str) -> None:
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
 
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(LOG_COLOURS.get(level, LOG_COLOURS["info"])))
+        fmt.setForeground(QColor(log_colour(level)))
         if level in ("heading", "error"):
             fmt.setFontWeight(QFont.Weight.Bold)
 
@@ -241,11 +260,22 @@ class LogView(QTextEdit):
             cursor.insertText("\n", QTextCharFormat())
         cursor.insertText(text.rstrip() + "\n", fmt)
 
-        # Only follow the tail when the user is already at the bottom, so
-        # scrolling back to read something is not yanked away from them.
+    def repaint_lines(self) -> None:
+        """Redraw every line in the scheme now on screen."""
         scrollbar = self.verticalScrollBar()
-        if scrollbar.value() >= scrollbar.maximum() - 40:
-            scrollbar.setValue(scrollbar.maximum())
+        at_bottom = scrollbar.value() >= scrollbar.maximum() - 40
+        position = scrollbar.value()
+        # Qt's clear, not ours: the record is what is being replayed.
+        super().clear()
+        for text, level in self._lines:
+            self._write(text, level)
+        scrollbar.setValue(scrollbar.maximum() if at_bottom else position)
+
+    def clear(self) -> None:  # noqa: D102 - QTextEdit's name
+        # The record goes with the text, or a repaint resurrects a run the
+        # user has already cleared away.
+        self._lines.clear()
+        super().clear()
 
     def save_to(self, path: Path) -> None:
         path.write_text(self.toPlainText(), encoding="utf-8")
@@ -260,16 +290,24 @@ class CheckListView(QTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setObjectName("checkList")
+        self._report = None
+
+    def repaint_lines(self) -> None:
+        """Redraw the last report in the scheme now on screen."""
+        if self._report is not None:
+            self.show_report(self._report)
 
     def show_report(self, report) -> None:
+        self._report = report
+        muted = theme.active()["muted"]
         rows = []
         for check in report.checks:
-            colour = LOG_COLOURS.get(
+            colour = log_colour(
                 {"ok": "success", "warning": "warning", "error": "error"}[check.status]
             )
             symbol = self.SYMBOLS[check.status]
             fix = (
-                f'<div style="margin:2px 0 0 22px;color:#57606a;">{_escape(check.fix)}</div>'
+                f'<div style="margin:2px 0 0 22px;color:{muted};">{_escape(check.fix)}</div>'
                 if check.fix
                 else ""
             )

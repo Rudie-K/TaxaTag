@@ -140,6 +140,7 @@ def tool_tree():
 DEVELOPER_ONLY = {
     "screenshot-run.png",                  # illustrates the README, nothing else
     "screenshot-results.png",
+    "screenshot-dark.png",
 }
 
 
@@ -157,7 +158,7 @@ def resource_files():
     for path in sorted((PROJECT_ROOT / "resources").rglob("*")):
         if path.is_dir() or "__pycache__" in path.parts:
             continue
-        if path.name in DEVELOPER_ONLY:
+        if path.name in DEVELOPER_ONLY or path.name.startswith("screenshot-"):
             continue
         relative = path.relative_to(PROJECT_ROOT / "resources").parent
         found.append((str(path), str(pathlib.PurePosixPath("resources") / relative)))
