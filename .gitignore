@@ -108,3 +108,7 @@ dist/installer/
 /tools/
 /dev-notes/
 /docs/
+# Orientation for whoever picks this up next. Withheld because almost
+# every pointer in it leads into a folder above, and because one of its
+# rules is about a drive on one particular machine.
+/CLAUDE.md
