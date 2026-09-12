@@ -7,9 +7,9 @@ table of which species were found in which sample. Designed on Windows and comin
 
 ![The TaxaTag window](resources/screenshot-run.png)
 
-**1** checks your files, tools and settings before anything runs. **2** analyses
-four bundled samples whose answers are known, so you can prove the installation
-works before trusting it with real data. **3** starts.
+**1** checks your files, tools and settings before anything runs. 
+**2** analyses four bundled samples whose answers are known, so you can prove the installation works before trusting it with real data. 
+**3** starts.
 
 Metabarcoding analysis has generally meant a chain of command-line tools, a
 Linux machine, and paths and thresholds edited into scripts by hand. TaxaTag
