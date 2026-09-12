@@ -142,14 +142,14 @@ against the marine core library. One sample's rows, as they come out:
 | *Trachurus* | **Genus** | 100 | 361 | 0.50 | Carangidae |
 | *Pomatoschistus pictus* | Species | 99.55 | 286 | 0.40 | Gobiidae |
 
-***Trachurus*** **stops at genus.** Several horse mackerel species matched
+**"Trachurus"** **stops at genus.** Several horse mackerel species matched
 equally well, and rather than pick the first and call it a species, TaxaTag
 reports the rank they agree on. **"Unidentified"** is the same honesty
 applied to a sequence nothing matched well enough to name. Both are visible
 in the table, both are counted, and neither is quietly dropped.
 
 The file behind it is `05_results/species_composition.csv` — one row per taxon
-per sample, with the evidence beside it. **Save a copy of this table** writes
+per sample, with the evidence beside it. The **"Save a copy of this table"** button writes
 whatever you are looking at, filters included.
 
 ---
