@@ -7,6 +7,10 @@ table of which species were found in which sample. Designed on Windows and comin
 
 ![The TaxaTag window](resources/screenshot-run.png)
 
+**1** checks your files, tools and settings before anything runs. **2** analyses
+four bundled samples whose answers are known, so you can prove the installation
+works before trusting it with real data. **3** starts.
+
 Metabarcoding analysis has generally meant a chain of command-line tools, a
 Linux machine, and paths and thresholds edited into scripts by hand. TaxaTag
 does the same science through a window, with every setting visible and
@@ -64,6 +68,12 @@ Everything is on the [releases page](https://github.com/Rudie-K/TaxaTag/releases
 Take the **portable zip** if you are on a managed university or consultancy
 laptop, or if you are unsure. It is the same program.
 
+**What it needs:** Windows 10 or 11, 64-bit. About 450 MB for the program and
+2 GB more if you take the reference library. 8 GB of memory is comfortable.
+No administrator password, no Python, no R, and nothing else to install —
+Cutadapt, VSEARCH, NCBI BLAST+ and the SRA Toolkit are all inside the
+download.
+
 **On macOS and Linux** there is no packaged download yet. TaxaTag itself runs
 on both — the tools it needs are bundled for all three systems — so you can
 run it from the source folder today with `./taxatag.sh`, which sets itself up
@@ -90,21 +100,60 @@ the *Run* tab if you would rather decide later.
 
 ### 4. Run your data
 
-Point **Sequencing files** at the folder holding your reads — paired files are
-matched up automatically, whatever they are named, and files split across lanes
-are joined back together. Choose a **Results folder**. Press **Check my setup**
-to catch problems before anything runs, then **Start analysis**.
+Point **Sequencing files** at the folder holding your reads. Choose a
+**Results folder**. Press **Check my setup**, then **Start analysis**.
+
+TaxaTag reads what comes off a sequencer or out of the SRA, as it arrives:
+
+| | |
+|---|---|
+| `.fastq`, `.fastq.gz`, `.fq.gz` | the usual output of a sequencing run |
+| `.sra`, or a bare accession folder | downloaded from the NCBI Sequence Read Archive |
+
+Paired files are matched up automatically **whatever they are named** —
+`_R1`/`_R2`, `_1`/`_2`, or a convention your sequencing provider invented — and
+files split across lanes are joined back together. You do not rename anything.
+
+**How long it takes.** TaxaTag tells you before you start: the line above the
+buttons gives an estimate for the folder you have chosen, learned from runs
+already measured on that machine. As a rough guide, twenty samples against a
+local library is minutes rather than hours; the same twenty against NCBI over
+the web is considerably slower, because the wait is theirs and not yours.
 
 ### 5. Read the results
 
 Each run creates its own dated folder, so an earlier run is never overwritten.
-The file most people want is `05_results/species_composition.csv`: one row per
-species, one column per sample, with the rank resolved and the
-evidence behind it.
+Results open in the window, and any earlier run can be reopened from the
+picker at **1**.
 
-Every setting has its own explanation in the window, so the program is the
-manual for the rest: what each results file contains, how to resume an
-interrupted run, and what to do when something looks wrong.
+![The results of a finished run](resources/screenshot-results.png)
+
+This is a real run: twenty-one water samples from a Sussex kelp survey, 16S,
+against the marine core library. One sample's rows, as they come out:
+
+| Scientific name | Rank | Identity | Reads | % of sample | Family |
+|---|---|---|---|---|---|
+| Unidentified | **Unidentified** | 100 | 50,840 | 70.7 | |
+| *Mullus surmuletus* | Species | 100 | 3,058 | 4.25 | Mullidae |
+| *Scomber scombrus* | Species | 100 | 1,898 | 2.64 | Scombridae |
+| *Trigloporus lastoviza* | Species | 100 | 886 | 1.23 | Triglidae |
+| *Callionymus lyra* | Species | 100 | 770 | 1.07 | Callionymidae |
+| *Diplecogaster bimaculata* | Species | 100 | 395 | 0.55 | Gobiesocidae |
+| *Trachurus* | **Genus** | 100 | 361 | 0.50 | Carangidae |
+| *Pomatoschistus pictus* | Species | 99.55 | 286 | 0.40 | Gobiidae |
+
+Red mullet, mackerel, streaked gurnard, dragonet, two-spotted clingfish, a
+painted goby — and two rows that are the point of the program.
+
+***Trachurus*** **stops at genus.** Several horse mackerel species matched
+equally well, and rather than pick the first and call it a species, TaxaTag
+reports the rank they agree on. **"Unidentified"** is the same honesty
+applied to a sequence nothing matched well enough to name. Both are visible
+in the table, both are counted, and neither is quietly dropped.
+
+The file behind it is `05_results/species_composition.csv` — one row per taxon
+per sample, with the evidence beside it. **Save a copy of this table** writes
+whatever you are looking at, filters included.
 
 ---
 
@@ -153,9 +202,18 @@ belongs to. **Check my setup** names anything that would stop a run before it
 starts, and **Test the analysis pipeline** proves the installation works on
 data whose answer is already known.
 
-Beyond that, this page is the manual. **Help → About** shows the version,
-the licence and where your settings file lives — worth having to hand if you
-get in touch.
+Beyond that, this page is the manual.
+
+**If something goes wrong**, open an
+[issue](https://github.com/Rudie-K/TaxaTag/issues) and say what you did, what
+happened, and what you expected. **Help → About** shows the version and where
+your settings file lives; both are worth including. **Save log to a file...**
+on the *Run* tab writes everything TaxaTag printed during a run, which is
+usually the fastest way to see what happened.
+
+Bug reports are welcome and so are requests. TaxaTag is built for a particular
+kind of survey, and the way it learns about others is somebody saying theirs
+does not fit.
 
 ---
 

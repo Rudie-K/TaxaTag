@@ -139,6 +139,7 @@ def tool_tree():
 #: business sitting in their Program Files.
 DEVELOPER_ONLY = {
     "screenshot-run.png",                  # illustrates the README, nothing else
+    "screenshot-results.png",
 }
 
 
