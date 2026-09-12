@@ -52,16 +52,19 @@ DYSLEXIC_FILES = ("OpenDyslexic-Regular.otf", "OpenDyslexic-Bold.otf")
 # ends up unreadable on a laptop in daylight.
 #
 # The ground - `background`, the colour behind everything - is TaxaTag's
-# blue, the blue of the base pairs in the emblem: a light steel blue in the
-# light scheme, navy in the dark. The panels, fields, tables and the log
+# blue, the blue of the base pairs in the emblem: a pale blue in the light
+# scheme, so the blue titles on it still pop, navy in the dark. The plan box
+# (`callout`) is one step stronger than the ground in light, since it is a
+# statement and should read as one. The panels, fields, tables and the log
 # stay white or near-black, so the blue frames the work without touching
 # anything that carries meaning (decisions/0025). The secondary surfaces
 # take the same tint so the scheme reads as one thing.
 PALETTES: Dict[str, Dict[str, str]] = {
     LIGHT: {
-        "background": "#cfdcec",
+        "background": "#e9eff6",
         "panel": "#ffffff",
-        "panel_sunken": "#e9eff6",      # disabled fields, the plan box
+        "panel_sunken": "#e9eff6",      # disabled fields, computed values
+        "callout": "#cfdcec",           # the plan box: a step stronger than the ground
         "header": "#e3ebf4",            # table column headings
         "gridline": "#e3eaf2",
         "border": "#c3d1e1",
@@ -92,6 +95,7 @@ PALETTES: Dict[str, Dict[str, str]] = {
         "background": "#0c1a2e",
         "panel": "#16243a",
         "panel_sunken": "#1e2e47",
+        "callout": "#1e2e47",
         "header": "#1e2e47",
         "gridline": "#27395a",
         "border": "#33466a",
@@ -124,6 +128,7 @@ PALETTES: Dict[str, Dict[str, str]] = {
         "background": "#ffffff",
         "panel": "#ffffff",
         "panel_sunken": "#f0f0f0",
+        "callout": "#f0f0f0",
         "header": "#e6e6e6",
         "gridline": "#000000",
         "border": "#000000",
@@ -162,6 +167,7 @@ TEXT_PAIRS = (
     ("text", "background"),
     ("text", "panel"),
     ("text", "panel_sunken"),
+    ("text", "callout"),
     ("text", "header"),
     ("muted", "background"),
     ("muted", "panel"),
@@ -366,7 +372,7 @@ QLabel#statusLabel {{
    committing to a run that may take an hour. */
 QLabel#planLabel {{
     color: {palette['text']};
-    background-color: {palette['panel_sunken']};
+    background-color: {palette['callout']};
     border-left: 3px solid {palette['accent']};
     border-radius: 3px;
     padding: 7px 10px;
