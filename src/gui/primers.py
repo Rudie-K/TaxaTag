@@ -16,6 +16,7 @@ from typing import Dict, List, Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QComboBox,
@@ -596,6 +597,11 @@ class PrimerSetPanel(QWidget):
         #: that sets up a configuration without a person present. A modal
         #: dialog with no one to dismiss it does not warn anybody; it hangs.
         self.ask_before_switching_off = True
+        #: Set when the warning's "don't ask again" box is ticked with a Yes.
+        #: Deliberately not saved anywhere: it lasts until TaxaTag is next
+        #: opened. A warning silenced for ever is one nobody at this machine
+        #: sees again, and the second person to use it never had the choice.
+        self._silenced_this_session = False
 
         intro = HelpLabel(
             "TaxaTag looks for each ticked primer set in every sample, and works "
@@ -723,23 +729,32 @@ class PrimerSetPanel(QWidget):
         Turning one *on* is not confirmed. It can only add work, never discard
         any.
         """
-        if not self.ask_before_switching_off:
+        if not self.ask_before_switching_off or self._silenced_this_session:
             return True
         name = locus.get("name", "this primer set")
         marker = locus.get("marker") or markers_module.infer_marker(name) or "its marker"
-        answer = QMessageBox.warning(
-            self,
-            "Stop looking for this primer set?",
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Stop looking for this primer set?")
+        box.setText(
             f"'{name}' will not be looked for in any sample.{chr(10)}{chr(10)}"
             f"Anything sequenced with {marker} primers will be reported as "
             f"having no recognised primers, and will not reach the results.{chr(10)}{chr(10)}"
             "If you have a run waiting to be resumed, it will have to start "
             "again from trimming: the trimmed reads were produced with a "
             f"different set of primers.{chr(10)}{chr(10)}"
-            "Its primers are kept either way, so you can switch it back on.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
+            "Its primers are kept either way, so you can switch it back on."
         )
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        again = QCheckBox("Don't ask again until TaxaTag is next opened")
+        box.setCheckBox(again)
+        answer = box.exec()
+        # Honoured only with a Yes. Somebody who ticks the box and then
+        # cancels has just been talked out of it; silencing the warning on
+        # that answer would let the next click through unwarned.
+        if answer == QMessageBox.StandardButton.Yes and again.isChecked():
+            self._silenced_this_session = True
         return answer == QMessageBox.StandardButton.Yes
 
     def _selected_row(self) -> int:
