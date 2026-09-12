@@ -316,6 +316,20 @@ QFrame#rule {{ color: {palette['border']}; }}
 
 QCheckBox {{ spacing: 8px; padding: 3px 0; }}
 
+/* Fusion outlines a check box with the window colour darkened, which on a
+   dark window is darker than the dark: the box vanished from the primer
+   table and from the warning that offers "don't ask again". Only the
+   unticked state is styled. Styling the ticked one too would take the
+   tick away as well, since a styled indicator draws nothing it is not
+   given an image for - and the tick reads on its own. */
+QCheckBox::indicator:unchecked, QTableView::indicator:unchecked {{
+    width: 14px;
+    height: 14px;
+    border: 1px solid {palette['muted']};
+    border-radius: 3px;
+    background: {palette['background']};
+}}
+
 QScrollArea {{ border: none; background: transparent; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
 
