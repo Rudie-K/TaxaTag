@@ -50,19 +50,26 @@ DYSLEXIC_FILES = ("OpenDyslexic-Regular.otf", "OpenDyslexic-Bold.otf")
 # text-on-surface pair in both schemes meets WCAG AA (4.5:1) and
 # `tools/contrast.py` measures that - eyeballing a dark scheme is how a grey
 # ends up unreadable on a laptop in daylight.
+#
+# The ground - `background`, the colour behind everything - is TaxaTag's
+# blue, the blue of the base pairs in the emblem: a light steel blue in the
+# light scheme, navy in the dark. The panels, fields, tables and the log
+# stay white or near-black, so the blue frames the work without touching
+# anything that carries meaning (decisions/0025). The secondary surfaces
+# take the same tint so the scheme reads as one thing.
 PALETTES: Dict[str, Dict[str, str]] = {
     LIGHT: {
-        "background": "#f6f7f9",
+        "background": "#cfdcec",
         "panel": "#ffffff",
-        "panel_sunken": "#f0f1f3",      # disabled fields, the plan box
-        "header": "#eef1f4",            # table column headings
-        "gridline": "#eceef0",
-        "border": "#d8dce1",
-        "border_faint": "#e6e8eb",
+        "panel_sunken": "#e9eff6",      # disabled fields, the plan box
+        "header": "#e3ebf4",            # table column headings
+        "gridline": "#e3eaf2",
+        "border": "#c3d1e1",
+        "border_faint": "#dbe4ee",
         "text": "#24292f",
-        "muted": "#57606a",
+        "muted": "#4c555f",
         "text_disabled": "#9aa1a9",
-        "pressed": "#eef2f6",
+        "pressed": "#e3ebf4",
         "accent": "#1a4d7a",
         "accent_hover": "#215f96",
         "accent_pressed": "#143c60",
@@ -82,17 +89,17 @@ PALETTES: Dict[str, Dict[str, str]] = {
     # enough to read. Filled buttons carry dark text here, because a pale
     # accent under white lettering is the commonest dark-mode mistake.
     DARK: {
-        "background": "#15191f",
-        "panel": "#1e242c",
-        "panel_sunken": "#262d36",
-        "header": "#262d36",
-        "gridline": "#2c343e",
-        "border": "#3b434e",
-        "border_faint": "#2c343e",
+        "background": "#0c1a2e",
+        "panel": "#16243a",
+        "panel_sunken": "#1e2e47",
+        "header": "#1e2e47",
+        "gridline": "#27395a",
+        "border": "#33466a",
+        "border_faint": "#27395a",
         "text": "#e6edf3",
         "muted": "#9da7b3",
         "text_disabled": "#6b7580",
-        "pressed": "#2c343e",
+        "pressed": "#27395a",
         "accent": "#79b8ff",
         "accent_hover": "#94c7ff",
         "accent_pressed": "#5aa3f0",
@@ -400,6 +407,13 @@ QFrame#rule {{ color: {palette['border']}; }}
 
 QCheckBox {{ spacing: 8px; padding: 3px 0; }}
 
+/* Text sits on whatever is behind it. The QWidget rule above gives every
+   widget the ground colour, and a label inside a white panel was painting
+   a strip of ground across it - faint grey until the ground was blue. The
+   labels that carry their own box (the plan, computed values) set a
+   background of their own further down and win by specificity. */
+QLabel, QCheckBox, QRadioButton {{ background: transparent; }}
+
 /* Fusion outlines a check box with the window colour darkened, which on a
    dark window is darker than the dark: the box vanished from the primer
    table and from the warning that offers "don't ask again". Only the
@@ -411,7 +425,7 @@ QCheckBox::indicator:unchecked, QTableView::indicator:unchecked {{
     height: 14px;
     border: {px} solid {palette['muted']};
     border-radius: 3px;
-    background: {palette['background']};
+    background: {palette['panel']};
 }}
 
 QScrollArea {{ border: none; background: transparent; }}
