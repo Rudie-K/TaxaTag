@@ -49,9 +49,6 @@ rather than guessing.
 | **It can prove it works** | A bundled self-test runs four samples with known answers, so you can confirm the installation is sound before trusting it with real data. |
 | **It tells you about updates, and takes no for an answer** | If a newer version exists, TaxaTag says so once and offers to install it. "Don't ask again" applies to that version, not to updates forever. It never updates itself without being asked. |
 
-Each of these was a decision with trade-offs, and the reasoning is recorded
-in the project's own notes rather than here.
-
 ---
 
 ## Getting started
@@ -70,13 +67,13 @@ laptop, or if you are unsure. It is the same program.
 
 **What it needs:** Windows 10 or 11, 64-bit. About 450 MB for the program and
 2 GB more if you take the reference library. 8 GB of memory is comfortable.
-No administrator password, no Python, no R, and nothing else to install —
+You require no administrator password, no existing Python or R, and nothing else to install —
 Cutadapt, VSEARCH, NCBI BLAST+ and the SRA Toolkit are all inside the
 download.
 
 **On macOS and Linux** there is no packaged download yet. TaxaTag itself runs
 on both — the tools it needs are bundled for all three systems — so you can
-run it from the source folder today with `./taxatag.sh`, which sets itself up
+run it from the source folder today with `./taxatag.sh`on the command line, which sets itself up
 on the first run. A packaged build for each is the next thing planned.
 
 ### 2. Check it works
@@ -114,11 +111,11 @@ Paired files are matched up automatically **whatever they are named** —
 `_R1`/`_R2`, `_1`/`_2`, or a convention your sequencing provider invented — and
 files split across lanes are joined back together. You do not rename anything.
 
-**How long it takes.** TaxaTag tells you before you start: the line above the
+**How long it takes.** TaxaTag estimates before you start: the line above the
 buttons gives an estimate for the folder you have chosen, learned from runs
 already measured on that machine. As a rough guide, twenty samples against a
 local library is minutes rather than hours; the same twenty against NCBI over
-the web is considerably slower, because the wait is theirs and not yours.
+the web is considerably slower as it relies on external servers.
 
 ### 5. Read the results
 
@@ -167,8 +164,7 @@ and reference libraries are not touched.
 
 Nothing is ever installed without being asked, and nothing is installed that
 cannot be checked against the checksum published with it. If there is no
-internet connection, TaxaTag says nothing at all rather than complaining
-about a check you did not ask for.
+internet connection, TaxaTag says nothing at all.
 
 Reference libraries are offered the same way when a newer one is published,
 and are replaced without closing anything.
@@ -184,11 +180,10 @@ record, which is why a 12S read is only ever searched against 12S references.
 The **marine core** covers fish, invertebrates and eukaryotic plankton across
 all four markers — around 3 million sequences, built from MitoFish, MIDORI2,
 BOLD, PR2 and the NCBI taxonomy. It is free, and TaxaTag can download it for
-you.
+you by clicking the library option.
 
-You can also build your own, extend the core with your own sequences, or point
-TaxaTag at an existing BLAST database. The *Run* tab's library list is where
-all of that is chosen.
+You can also build your own, extend the core with your own sequences, assign
+an existing BLAST database. The *Run* tab's library list is where all of that is chosen.
 
 ---
 
@@ -196,10 +191,7 @@ all of that is chosen.
 
 Every setting in TaxaTag explains itself in the window, under the field it
 belongs to. **Check my setup** names anything that would stop a run before it
-starts, and **Test the analysis pipeline** proves the installation works on
-data whose answer is already known.
-
-Beyond that, this page is the manual.
+starts, and **Test the analysis pipeline** proves the installation works on known data.
 
 **If something goes wrong**, open an
 [issue](https://github.com/Rudie-K/TaxaTag/issues) and say what you did, what
@@ -208,9 +200,8 @@ your settings file lives; both are worth including. **Save log to a file...**
 on the *Run* tab writes everything TaxaTag printed during a run, which is
 usually the fastest way to see what happened.
 
-Bug reports are welcome and so are requests. TaxaTag is built for a particular
-kind of survey, and the way it learns about others is somebody saying theirs
-does not fit.
+Bug reports are welcome and so are requests. 
+TaxaTag aims to be a continually improving community asset for the environmental community.
 
 ---
 
@@ -228,14 +219,11 @@ Cutadapt is MIT, and NCBI BLAST+ and the SRA Toolkit are United States public
 domain (correct as of 09/09/2026).
 
 **The name and the logo are separate.** "TaxaTag" and its logo are not
-covered by the GPL, and all rights in them are reserved — a provision the GPL itself allows, in section 7(e). Use
+covered by the GPL, and all rights in them are reserved. You are free to use
 the name and show the logo whenever you are talking *about* TaxaTag: cite it,
-link it, teach with it, put it on a slide. What the carve-out prevents is a
-*modified* version going out under this name and mark. TaxaTag puts species
-names in people's papers, and somebody who cannot tell a fork's answer from
-this program's has been misled twice — by the result, and by the name that
-told them to trust it. Fork freely; rename when you do.
-[Full terms](resources/BRANDING.md).
+link it, teach with it, put it on a slide or any other non-modifying purpose.
+What the carve-out prevents is a *modified* version going out under this name and mark. 
+As TaxaTag is a scientific program modified versions under its branding are not permitted unless explicitly granted.
 
 **Reference data is separate.** A reference library is a dataset, not part of
 this program, and the sources it is built from — MitoFish, MIDORI2, PR2, BOLD
