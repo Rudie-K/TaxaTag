@@ -68,6 +68,7 @@ class ResultsPanel(QWidget):
         self.sample_filter.setEnabled(False)
 
         self.table = QTableWidget(0, 0)
+        self.table.setAccessibleName("Species found, one row per taxon per sample")
         self.table.setSortingEnabled(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)

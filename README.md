@@ -153,7 +153,8 @@ whatever you are looking at, optional filters included.
 
 A species table is something you read for a long time. If a white window is
 hard on your eyes, the **Display** group at the top of the Settings tab has a
-dark scheme; by default TaxaTag follows whatever your computer is set to.
+dark scheme, three text sizes, and a dyslexia-friendly font; by default
+TaxaTag follows whatever your computer is set to.
 
 ![The window in the dark scheme](resources/screenshot-dark.png)
 

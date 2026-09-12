@@ -36,6 +36,17 @@ class Reporter:
 
     LEVELS = ("debug", "info", "warning", "error", "success")
 
+    #: The mark a line carries for its level - in the terminal, in the
+    #: window, and in a log saved to a file, all the same. The window colours
+    #: the line as well, but colour must not be the only signal: a reader
+    #: who cannot tell amber from black, or who is reading the saved file,
+    #: gets the same mark. Levels not listed carry none.
+    PREFIXES = {"warning": "[!] ", "error": "[ERROR] ", "success": "[OK] "}
+
+    @classmethod
+    def marked(cls, message: str, level: str) -> str:
+        return cls.PREFIXES.get(level, "") + message
+
     def __init__(
         self,
         log_fn: Optional[Callable[[str, str], None]] = None,
@@ -58,14 +69,8 @@ class Reporter:
             self._log_fn(message, level)
         else:
             stream = sys.stderr if level == "error" else sys.stdout
-            prefix = {
-                "debug": "      ",
-                "info": "  ",
-                "warning": "  [!] ",
-                "error": "  [ERROR] ",
-                "success": "  [OK] ",
-            }.get(level, "  ")
-            print(f"{prefix}{message}", file=stream, flush=True)
+            indent = "      " if level == "debug" else "  "
+            print(f"{indent}{self.marked(message, level)}", file=stream, flush=True)
 
     def debug(self, message: str) -> None:
         self.log(message, "debug")

@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.gui import theme
+from src.utils.reporting import Reporter
 
 #: The kinds of log line. Their colours live in the palette, one set per
 #: scheme, under `log_<level>` - here they were a second dictionary and the
@@ -88,6 +89,11 @@ class PathPicker(QWidget):
 
         self.field = QLineEdit()
         self.field.setPlaceholderText(placeholder)
+        # A screen reader lands on the text box, not on this widget, and the
+        # form's label is this widget's buddy, so without a name of its own
+        # the box announces as "edit". `set_label` replaces this with the
+        # row's label once the form has one.
+        self.field.setAccessibleName(placeholder)
         self.field.textChanged.connect(self.changed.emit)
 
         self._settling = QTimer(self)
@@ -97,7 +103,10 @@ class PathPicker(QWidget):
         self.field.textChanged.connect(lambda _: self._settling.start())
 
         browse = QPushButton("Browse...")
-        browse.setFixedWidth(90)
+        self.browse_button = browse
+        # Its own width, not a fixed one: a width pinned at the normal text
+        # size clipped the button to "rowse" at the large one.
+        browse.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         browse.clicked.connect(self._browse)
 
         row = QHBoxLayout(self)
@@ -208,6 +217,11 @@ class PathPicker(QWidget):
         text = self.value()
         return Path(text) if text else None
 
+    def set_label(self, label: str) -> None:
+        """What a screen reader calls this picker: the form row's label."""
+        self.field.setAccessibleName(label)
+        self.browse_button.setAccessibleName(f"Browse for {label[:1].lower()}{label[1:]}")
+
 
 class LogView(QTextEdit):
     """
@@ -225,16 +239,15 @@ class LogView(QTextEdit):
         self.setReadOnly(True)
         self.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.document().setMaximumBlockCount(self.MAX_BLOCKS)
+        self.setAccessibleName("Progress log")
         # What has been written, with its level. A line's colour is baked
         # into the document as it is appended, so a change of scheme cannot
         # reach it through the stylesheet; this is what `repaint_lines`
         # rebuilds from. Capped the same way the document is.
         self._lines: deque = deque(maxlen=self.MAX_BLOCKS)
-
-        font = QFont("Consolas" if _has_font("Consolas") else "Monospace")
-        font.setStyleHint(QFont.StyleHint.Monospace)
-        font.setPointSize(9)
-        self.setFont(font)
+        # The face and size come from the stylesheet, under this name, so
+        # that the text-size setting and the dyslexia-friendly font reach
+        # the log the same way they reach everything else.
         self.setObjectName("logView")
 
     def append_line(self, text: str, level: str = "info") -> None:
@@ -258,7 +271,9 @@ class LogView(QTextEdit):
 
         if level == "heading":
             cursor.insertText("\n", QTextCharFormat())
-        cursor.insertText(text.rstrip() + "\n", fmt)
+        # The same [OK] / [!] / [ERROR] the terminal prints, so that severity
+        # is carried by the words and not only by the colour.
+        cursor.insertText(Reporter.marked(text.rstrip(), level) + "\n", fmt)
 
     def repaint_lines(self) -> None:
         """Redraw every line in the scheme now on screen."""
@@ -290,6 +305,7 @@ class CheckListView(QTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setObjectName("checkList")
+        self.setAccessibleName("Setup check results")
         self._report = None
 
     def repaint_lines(self) -> None:
@@ -374,8 +390,3 @@ def _escape(text: str) -> str:
         .replace(">", "&gt;")
     )
 
-
-def _has_font(name: str) -> bool:
-    from PyQt6.QtGui import QFontDatabase
-
-    return name in QFontDatabase.families()

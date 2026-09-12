@@ -195,6 +195,7 @@ class MainWindow(QMainWindow):
         folders_form = QFormLayout(folders)
         folders_form.setSpacing(6)
         folders_form.addRow("Sequencing files", self.input_picker)
+        self.input_picker.set_label("Sequencing files")
         # Also `settled`: the summary counts samples by listing the folder.
         self.input_picker.settled.connect(lambda _: self.refresh_plan())
         folders_form.addRow(
@@ -205,6 +206,7 @@ class MainWindow(QMainWindow):
             )
         )
         folders_form.addRow("Results folder", self.output_picker)
+        self.output_picker.set_label("Results folder")
         # `settled` rather than `changed`: both reactions read the disk -
         # one looks for an unfinished run, the other reads a manifest per
         # finished one and loads a table - and `changed` fires on every
@@ -232,7 +234,7 @@ class MainWindow(QMainWindow):
             )
         )
 
-        self.check_button = QPushButton("Check my setup")
+        self.check_button = QPushButton("&Check my setup")
         self.check_button.clicked.connect(self.run_checks)
         # A real analysis of bundled data with a known answer. Separate from
         # the checks because it takes half a minute rather than an instant,
@@ -241,24 +243,24 @@ class MainWindow(QMainWindow):
         # "Run a self-test" said what the program was doing rather than what
         # the user was getting. This names the thing being tested, which is
         # the question somebody has when deciding whether to press it.
-        self.selftest_button = QPushButton("Test the analysis pipeline")
+        self.selftest_button = QPushButton("&Test the analysis pipeline")
         self.selftest_button.setToolTip(
             "Analyse four small built-in samples whose contents are known, to "
             "confirm TaxaTag is installed and working. Takes about fifteen "
             "seconds and needs no internet connection."
         )
         self.selftest_button.clicked.connect(self.run_selftest)
-        self.run_button = QPushButton("Start analysis")
+        self.run_button = QPushButton("&Start analysis")
         self.run_button.setObjectName("primaryButton")
         self.run_button.clicked.connect(self.start_run)
-        self.stop_button = QPushButton("Stop")
+        self.stop_button = QPushButton("Sto&p")
         self.stop_button.setObjectName("stopButton")
         self.stop_button.clicked.connect(self.stop_run)
         self.stop_button.setVisible(False)
         # Shown only when there is genuinely something to continue, so its
         # presence is the answer to "can I pick up where I left off?" and the
         # user never has to press it to find out.
-        self.resume_button = QPushButton("Resume last run")
+        self.resume_button = QPushButton("&Resume last run")
         self.resume_button.clicked.connect(self.resume_run)
         self.resume_button.setVisible(False)
 
@@ -295,9 +297,9 @@ class MainWindow(QMainWindow):
 
         self.log_view = LogView()
 
-        save_log = QPushButton("Save log to a file...")
+        save_log = QPushButton("Save &log to a file...")
         save_log.clicked.connect(self.save_log)
-        self.open_results_button = QPushButton("Open results folder")
+        self.open_results_button = QPushButton("&Open results folder")
         self.open_results_button.clicked.connect(self.open_results_folder)
         self.open_results_button.setEnabled(False)
 
@@ -374,8 +376,18 @@ class MainWindow(QMainWindow):
         # Start with the upper pane at its natural height, so the scrollbar
         # only ever appears when the window genuinely cannot hold it.
         splitter.setSizes([upper.sizeHint().height(), 200])
+        # Kept so that a change of text size can ask again: the natural
+        # height taken here is the one at the size the window opened with.
+        self.run_splitter, self.run_upper = splitter, upper
 
         return _padded(splitter)
+
+    def _resettle_run_tab(self) -> None:
+        """Give the upper pane its natural height at the current text size."""
+        QApplication.instance().processEvents()      # labels re-measure first
+        wanted = self.run_upper.sizeHint().height()
+        total = sum(self.run_splitter.sizes())
+        self.run_splitter.setSizes([wanted, max(80, total - wanted)])
 
     def _build_display_group(self) -> QGroupBox:
         """
@@ -392,12 +404,29 @@ class MainWindow(QMainWindow):
             ("Match my computer", theme.SYSTEM),
             ("Light", theme.LIGHT),
             ("Dark", theme.DARK),
+            ("High contrast", theme.HIGH_CONTRAST),
         ):
             self.scheme_choice.addItem(label, choice)
         self.scheme_choice.setCurrentIndex(
             max(0, self.scheme_choice.findData(theme.saved_choice()))
         )
-        self.scheme_choice.currentIndexChanged.connect(self._scheme_chosen)
+        self.scheme_choice.currentIndexChanged.connect(self._display_changed)
+
+        self.size_choice = QComboBox()
+        for label, size in (
+            ("Small", theme.SMALL),
+            ("Normal", theme.NORMAL),
+            ("Large", theme.LARGE),
+        ):
+            self.size_choice.addItem(label, size)
+        self.size_choice.setCurrentIndex(
+            max(0, self.size_choice.findData(theme.saved_size()))
+        )
+        self.size_choice.currentIndexChanged.connect(self._display_changed)
+
+        self.dyslexic_font = QCheckBox("Use a dyslexia-friendly font")
+        self.dyslexic_font.setChecked(theme.saved_dyslexic())
+        self.dyslexic_font.toggled.connect(self._display_changed)
 
         form = QFormLayout(display)
         form.addRow("Colour scheme", self.scheme_choice)
@@ -408,20 +437,37 @@ class MainWindow(QMainWindow):
                 "the desktop does."
             )
         )
+        form.addRow("Text size", self.size_choice)
+        form.addRow(self.dyslexic_font)
+        form.addRow(
+            HelpLabel(
+                "OpenDyslexic: letters weighted at the bottom and shaped so that "
+                "b, d, p and q are harder to confuse. Some people read it more "
+                "easily, some do not; it is here to try."
+            )
+        )
         return display
 
-    def _scheme_chosen(self, _index: int) -> None:
-        choice = self.scheme_choice.currentData()
-        theme.save_choice(choice)
+    def _display_changed(self, *_args) -> None:
+        theme.save_choice(self.scheme_choice.currentData())
+        theme.save_size(self.size_choice.currentData())
+        theme.save_dyslexic(self.dyslexic_font.isChecked())
         self._apply_scheme()
 
     def _apply_scheme(self) -> None:
-        """Put the chosen scheme on screen, including what the stylesheet
-        cannot reach: lines already written into the log and check list."""
+        """Put the chosen scheme, size and face on screen, including what
+        the stylesheet cannot reach: lines already in the log and check
+        list."""
         app = QApplication.instance()
-        theme.apply(app, theme.resolve(theme.saved_choice()))
+        theme.apply(
+            app,
+            theme.resolve(theme.saved_choice()),
+            size=theme.saved_size(),
+            dyslexic=theme.saved_dyslexic(),
+        )
         self.log_view.repaint_lines()
         self.check_view.repaint_lines()
+        self._resettle_run_tab()
 
     def _system_scheme_changed(self, _scheme) -> None:
         # Only matters when following the system; a fixed choice ignores it.

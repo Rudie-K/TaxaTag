@@ -42,7 +42,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Before the window exists, so nothing is ever drawn in the wrong scheme
     # and then redrawn. Organisation and application names must already be
     # set - QSettings keys on them.
-    theme.apply(app, theme.resolve(theme.saved_choice()))
+    theme.apply(
+        app,
+        theme.resolve(theme.saved_choice()),
+        size=theme.saved_size(),
+        dyslexic=theme.saved_dyslexic(),
+    )
 
     icon = _icon()
     if icon:

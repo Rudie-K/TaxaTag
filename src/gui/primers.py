@@ -611,6 +611,7 @@ class PrimerSetPanel(QWidget):
         )
 
         self.table = QTableWidget(0, len(self.COLUMNS))
+        self.table.setAccessibleName("Primer sets")
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
