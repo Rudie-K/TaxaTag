@@ -142,9 +142,6 @@ against the marine core library. One sample's rows, as they come out:
 | *Trachurus* | **Genus** | 100 | 361 | 0.50 | Carangidae |
 | *Pomatoschistus pictus* | Species | 99.55 | 286 | 0.40 | Gobiidae |
 
-Red mullet, mackerel, streaked gurnard, dragonet, two-spotted clingfish, a
-painted goby — and two rows that are the point of the program.
-
 ***Trachurus*** **stops at genus.** Several horse mackerel species matched
 equally well, and rather than pick the first and call it a species, TaxaTag
 reports the rank they agree on. **"Unidentified"** is the same honesty
