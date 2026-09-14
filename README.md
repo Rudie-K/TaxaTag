@@ -91,6 +91,8 @@ TaxaTag offers to download the **marine core** library the first time it
 starts without one. It is 653 MB to download and about 2 GB installed, and it
 covers 12S, 16S, COI and 18S.
 
+Found here if app based installation fails - https://github.com/Rudie-K/TaxaTag-additional-content
+
 You do not have to take it. Without a library TaxaTag searches NCBI over the
 web instead, which works and is slower. The offer stays in the library list on
 the *Run* tab if you would rather decide later.
