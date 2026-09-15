@@ -7,6 +7,7 @@ table of which species were found in which sample. Designed on Windows and comin
 
 ![The TaxaTag window](resources/screenshot-run.png)
 
+
 **1** checks your files, tools and settings before anything runs. 
 **2** analyses four bundled samples whose answers are known, so you can prove the installation works before trusting it with real data. 
 **3** starts.
@@ -110,14 +111,13 @@ TaxaTag reads what comes off a sequencer or out of the SRA, as it arrives:
 | `.sra`, or a bare accession folder | downloaded from the NCBI Sequence Read Archive |
 
 Paired files are matched up automatically **whatever they are named** —
-`_R1`/`_R2`, `_1`/`_2`, or a convention your sequencing provider invented — and
-files split across lanes are joined back together. You do not rename anything.
+`_R1`/`_R2`, `_1`/`_2`. You do not need to rename anything.
 
-**How long it takes.** TaxaTag estimates before you start: the line above the
+**How long does it take?** TaxaTag estimates before you start: the line above the
 buttons gives an estimate for the folder you have chosen, learned from runs
-already measured on that machine. As a rough guide, twenty samples against a
-local library is minutes rather than hours; the same twenty against NCBI over
-the web is considerably slower as it relies on external servers.
+already measured on its installation, meaning the more runs, the more confident the estimation to your machine. 
+As a rough guide, twenty samples against a local library is minutes rather than hours; 
+the same twenty against NCBI over the web is considerably slower as it relies on external servers and is subject to shadow limits.
 
 ### 5. Read the results
 
@@ -127,7 +127,7 @@ picker at **1**.
 
 ![The results of a finished run](resources/screenshot-results.png)
 
-This is a real run: twenty-one water samples from a Sussex kelp survey, 16S,
+This is a real run: twenty-one water samples from the Sussex kelp Restoration Project, 16S,
 against the marine core library. One sample's rows, as they come out:
 
 | Scientific name | Rank | Identity | Reads | % of sample | Family |
@@ -141,15 +141,15 @@ against the marine core library. One sample's rows, as they come out:
 | *Trachurus* | **Genus** | 100 | 361 | 0.50 | Carangidae |
 | *Pomatoschistus pictus* | Species | 99.55 | 286 | 0.40 | Gobiidae |
 
-**"Trachurus"** **stops at genus.** Several horse mackerel species matched
+**"Trachurus" stops at genus.** Several horse mackerel species matched
 equally well, and rather than pick the first and call it a species, TaxaTag
 reports the rank they agree on. **"Unidentified"** is the same honesty
-applied to a sequence nothing matched well enough to name. Both are visible
-in the table, both are counted, and neither is quietly dropped.
+applied to a sequence nothing matched well enough to name. 
+Both are visible in the table, both are counted, and neither is quietly dropped.
 
-The file behind it is `05_results/species_composition.csv` — one row per taxon
-per sample, with the evidence beside it. The **"Save a copy of this table"** button writes
-whatever you are looking at, filters included.
+The file containing the results will be in its respective run folder as `05_results/species_composition.csv` 
+one row per taxon, per sample, with the evidence beside it. The **"Save a copy of this table"** button writes
+whatever you are looking at, optional filters included.
 
 ---
 
@@ -158,7 +158,7 @@ whatever you are looking at, filters included.
 When a newer version exists, TaxaTag says so the next time it starts, and
 offers three answers: install it now, be reminded next time, or skip this
 version. **Skipping applies to the version on offer**, not to updates in
-general — you will still hear about the one after it.
+general, you will still be asked about future updates.
 
 Choosing to update closes TaxaTag and runs the installer, which replaces the
 existing installation rather than adding a second one. Your settings, results
@@ -202,8 +202,8 @@ your settings file lives; both are worth including. **Save log to a file...**
 on the *Run* tab writes everything TaxaTag printed during a run, which is
 usually the fastest way to see what happened.
 
-Bug reports are welcome and so are requests. 
-TaxaTag aims to be a continually improving community asset for the environmental community.
+Bug reports are welcome through the GitHub **Issues** feature and so are requests. 
+TaxaTag aims to be a continually improving asset for the environmental community.
 
 ---
 
@@ -237,15 +237,6 @@ permit. Check it before passing a library on.
 
 ## Citing TaxaTag
 
-If you use TaxaTag in published work, please cite it and the tools it is built
-on.
+If you use TaxaTag in published work, please cite it and the tools it is built on.
 
 > Rudie Kauhanen, Lucy Thomas and Ruth Farrant. **TaxaTag: a localised open-source eDNA metabarcoding pipeline for non-bioinformaticians**, 2026.
-
-Please also cite:
-
-- **Cutadapt** — Martin, M. (2011). *EMBnet.journal* 17(1), 10–12.
-- **VSEARCH** — Rognes, T., Flouri, T., Nichols, B., Quince, C., Mahé, F.
-  (2016). *PeerJ* 4:e2584.
-- **BLAST** — Camacho, C. *et al.* (2009). *BMC Bioinformatics* 10:421.
-- **NCBI Taxonomy** — Schoch, C.L. *et al.* (2020). *Database* 2020:baaa062.
