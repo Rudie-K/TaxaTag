@@ -337,6 +337,10 @@ def write_audit(run_dir: Path, sheet: Path, out_dir: Optional[Path] = None) -> D
         CAUSE_MISASSIGNED: sum(1 for w in wrong if w["Cause"] == CAUSE_MISASSIGNED),
         CAUSE_FOREIGN: sum(1 for w in wrong if w["Cause"] == CAUSE_FOREIGN),
     }
+    # Confident and neither right nor wrong: the adjudicator could not support the
+    # species name - typically because a fuller reference set shows the fragment
+    # shared with another species. Not a false positive, and not nothing either.
+    result["confident_unsupported"] = sum(1 for r in rows if r.get("Outcome") == "Unresolved" and is_confident(r))
     result["corroborated_but_wrong"] = {
         CAUSE_MISASSIGNED: sum(1 for w in wrong if w["Cause"] == CAUSE_MISASSIGNED and w["Corroborated"] == "yes"),
         CAUSE_FOREIGN: sum(1 for w in wrong if w["Cause"] == CAUSE_FOREIGN and w["Corroborated"] == "yes"),

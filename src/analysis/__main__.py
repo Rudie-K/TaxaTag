@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {row['Rank']:8s} TP {row['TP']:>4} FP {row['FP']:>4} FN {row['FN']:>4}  precision {row['Precision'] or '-':6s} accuracy {row['Accuracy'] or '-'}")
         wrong, strict = result["confident_but_wrong"], result["corroborated_but_wrong"]
         print(f"  confident calls {result['confident']}: {wrong[metrics_module.CAUSE_MISASSIGNED]} misassigned, "
-              f"{wrong[metrics_module.CAUSE_FOREIGN]} foreign DNA")
+              f"{wrong[metrics_module.CAUSE_FOREIGN]} foreign DNA, {result['confident_unsupported']} unsupported (unresolved)")
         print(f"  of them corroborated ({metrics_module.CORROBORATED_REFERENCES}+ references) {result['corroborated']}: "
               f"{strict[metrics_module.CAUSE_MISASSIGNED]} misassigned, {strict[metrics_module.CAUSE_FOREIGN]} foreign DNA")
         return 0
