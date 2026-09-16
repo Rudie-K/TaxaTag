@@ -85,7 +85,7 @@ runtime:
   # Do not set this to 1. BLAST applies the limit while it searches rather than
   # after ranking the results, so asking for a single hit can return one that
   # is not the best match, and sometimes returns nothing at all.
-  blast_max_target_seqs: 10
+  blast_max_target_seqs: 500
 
   # Matches weaker than this are not reported at all.
   blast_evalue: 1.0e-5
