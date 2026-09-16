@@ -28,6 +28,7 @@ from src.reference.build import (
     create_empty_library,
     ensure_indexes,
     load_accession_taxids,
+    repair_bundled_names,
 )
 from src.reference.library import ReferenceLibrary
 from src.reference.sources import MITOGENOME_MIN_LENGTH
@@ -178,6 +179,19 @@ def command_info(args, reporter) -> int:
 def command_index(args, reporter) -> int:
     try:
         ensure_indexes(Path(args.library), reporter)
+    except FileNotFoundError as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+
+
+def command_repair(args, reporter) -> int:
+    taxids = load_accession_taxids(Path(args.taxids), reporter)
+    if not taxids:
+        print("the accession-to-taxid table is empty or missing", file=sys.stderr)
+        return 1
+    try:
+        repair_bundled_names(Path(args.library), taxids, args.marker, reporter)
     except FileNotFoundError as error:
         print(error, file=sys.stderr)
         return 1
@@ -377,6 +391,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     index = subparsers.add_parser("index", help="add the catalogue indexes a newer TaxaTag expects to an existing library")
     index.set_defaults(handler=command_index)
+
+    repair = subparsers.add_parser("repair", help="name the records a source's bundled accessions left nameless (decision 0028)")
+    repair.add_argument("--taxids", required=True, help="the source's accession-to-taxid Parquet table (MitoFish: seq_taxonid.parquet)")
+    repair.add_argument("--marker", "-m", default="12S")
+    repair.set_defaults(handler=command_repair)
 
     recipe = subparsers.add_parser(
         "recipe", help="check, and optionally build, a marker from known sources"

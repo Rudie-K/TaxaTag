@@ -188,6 +188,15 @@ class TaxonomyResolver:
             f"Loaded {len(self._by_taxid):,} taxa ({len(self._by_name):,} names)."
         )
 
+    def lineage_of(self, taxid: str) -> Optional[Dict[str, str]]:
+        """The 7-rank lineage of one NCBI taxid, placeholders blanked, or None."""
+        self.load()
+        lineage = self._by_taxid.get(str(taxid))
+        if lineage is None:
+            return None
+        return {column: ("" if is_unknown(value) else str(value).strip())
+                for (column, _), value in zip(LINEAGE_COLUMNS, lineage)}
+
     def resolve(self, record) -> Optional[Dict[str, str]]:
         """The lineage for one source record, or None when it cannot be placed."""
         self.load()
@@ -210,6 +219,44 @@ class TaxonomyResolver:
             column: ("" if is_unknown(value) else str(value).strip())
             for (column, _), value in zip(LINEAGE_COLUMNS, lineage)
         }
+
+
+#: Some sources bundle identical sequences from several accessions under one
+#: header, joined with semicolons - MitoFish writes `MW818422;MW818406`. The
+#: first build looked the whole string up as one accession, found nothing,
+#: and filed 97,455 12S records (15.7% of the volume) with no name below
+#: class; the Sussex Audit found them when a northern rockling present three
+#: times came out "Actinopterygii" (decision 0028). A bundle is resolved
+#: part by part and given the lineage its parts agree on.
+BUNDLE_SEPARATOR = ";"
+
+
+def split_bundle(accession: str) -> List[str]:
+    """The accessions a source header names, one or several."""
+    return [part.strip() for part in str(accession).split(BUNDLE_SEPARATOR) if part.strip()]
+
+
+def agreed_lineage(lineages: List[Dict[str, str]]) -> Optional[Dict[str, str]]:
+    """
+    The lineage several records share: every rank from kingdom down on
+    which all agree, blank from the first disagreement on. Two accessions
+    of one species agree everywhere; a bundle of *Gasterosteus aculeatus*
+    with *G. islandicus* is the genus and no species.
+    """
+    lineages = [l for l in lineages if l]
+    if not lineages:
+        return None
+    agreed: Dict[str, str] = {}
+    keep = True
+    for column, _ in LINEAGE_COLUMNS:
+        values = {(l.get(column) or "").strip() for l in lineages}
+        values.discard("")
+        if keep and len(values) == 1:
+            agreed[column] = values.pop()
+        else:
+            keep = False
+            agreed[column] = ""
+    return agreed
 
 
 def _identified_to_family(lineage: Dict[str, str]) -> bool:
@@ -382,8 +429,16 @@ def add_marker(
 
                     if not record.taxid and spec.taxid_map:
                         # Some sources publish sequences and taxonomy in
-                        # separate files; join them back together here.
-                        record.taxid = spec.taxid_map.get(record.source_accession, "")
+                        # separate files; join them back together here - and
+                        # a header may bundle several accessions (decision 0028).
+                        parts = split_bundle(record.source_accession)
+                        taxids = [spec.taxid_map[p] for p in parts if p in spec.taxid_map]
+                        if len(taxids) == 1:
+                            record.taxid = taxids[0]
+                        elif taxids:
+                            resolver.load()
+                            found = [resolver.lineage_of(t) for t in taxids]
+                            record.lineage = agreed_lineage([f for f in found if f]) or record.lineage
 
                     if record.key in seen:
                         result.skipped_duplicate += 1
@@ -575,6 +630,55 @@ def ensure_indexes(library_root: Path, reporter: Optional[Reporter] = None) -> L
         connection.close()
     reporter.info("Indexes added: " + (", ".join(added) if added else "none - the library already had them all."))
     return added
+
+
+def repair_bundled_names(library_root: Path, taxid_map: Dict[str, str], marker: str = "12S",
+                         reporter: Optional[Reporter] = None) -> Dict[str, int]:
+    """
+    Give a name to every record of `marker` that the first build left
+    nameless or half-placed because its header bundled several accessions
+    (decision 0028). Read-write, deliberately, like `ensure_indexes`: the one
+    maintenance step a person runs on purpose. Needs the source's accession
+    -> taxid table (`load_accession_taxids`); records whose accessions the
+    table does not know are left as they are and counted.
+
+    Returns counts: candidates looked at, renamed, taken to a genus or
+    family only (the bundle's parts disagree), left as they were.
+    """
+    reporter = reporter or console_reporter()
+    catalogue = Path(library_root) / CATALOGUE_NAME
+    if not catalogue.exists():
+        raise FileNotFoundError(f"No reference catalogue at {catalogue}")
+    connection = sqlite3.connect(catalogue)
+    counts = {"candidates": 0, "renamed": 0, "partly": 0, "unchanged": 0}
+    try:
+        resolver = TaxonomyResolver(connection, reporter)
+        resolver.load()
+        # Nameless records, and records a subspecies name left with a placeholder family.
+        rows = connection.execute(
+            "SELECT accession, common_name, species FROM reference_library WHERE marker_gene = ? AND "
+            "(species = 'Unknown Species' OR family = 'Unknown_Family' OR family = '' OR genus = 'Unknown')",
+            (marker,),
+        ).fetchall()
+        counts["candidates"] = len(rows)
+        updates = []
+        for library_id, common_name, old_species in rows:
+            source = common_name.split("Acc:", 1)[1].strip() if "Acc:" in (common_name or "") else ""
+            taxids = [taxid_map[p] for p in split_bundle(source) if p in taxid_map]
+            lineage = agreed_lineage([resolver.lineage_of(t) for t in taxids]) if taxids else None
+            if not lineage or not any(lineage.values()):
+                counts["unchanged"] += 1
+                continue
+            counts["renamed" if lineage.get("species") else "partly"] += 1
+            updates.append((*(lineage.get(column, "") for column, _ in LINEAGE_COLUMNS), library_id))
+        columns = ", ".join(f"{column} = ?" for column, _ in LINEAGE_COLUMNS)
+        connection.executemany(f"UPDATE reference_library SET {columns} WHERE accession = ?", updates)
+        connection.commit()
+    finally:
+        connection.close()
+    reporter.info(f"{marker}: {counts['candidates']:,} records looked at; {counts['renamed']:,} named to species, "
+                  f"{counts['partly']:,} to a higher rank, {counts['unchanged']:,} left as they were.")
+    return counts
 
 
 def create_empty_library(library_root: Path, reporter: Optional[Reporter] = None) -> Path:

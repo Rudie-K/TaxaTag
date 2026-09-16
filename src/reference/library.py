@@ -77,6 +77,18 @@ UNRESOLVED_RANK = re.compile(r"_X+$", re.IGNORECASE)
 #: 18S library is written this way.
 UNRESOLVED_SPECIES = re.compile(r"\s+(sp|spp|sp\.|spp\.)$", re.IGNORECASE)
 
+#: The same idea, further into the name. GenBank writes "Protopterus sp.
+#: NBE-2020", "Chiloglanis aff. micropogon 8 JD-2023a", "Cichla cf. monoculus
+#: JFR-2006": a genus known, a species provisional, and a voucher code after
+#: it, so the rule above (which looks only at the end) let all of these vote
+#: as species - 6,476 of them in the 12S volume, each a string no other
+#: record shares, each a vote against the real binomial in a tie. And
+#: "androgenetic Carassius auratus red var. x Megalobrama amblycephala" is a
+#: hybrid, which is not a species of anything: 645 of those. Decision 0028;
+#: Sussex Audit issues log 33.
+PROVISIONAL_SPECIES = re.compile(r"\s(sp|spp|cf|aff|nr)\.?(\s|$)", re.IGNORECASE)
+HYBRID = re.compile(r"\s+x\s+")
+
 
 def is_unknown(value: Optional[str]) -> bool:
     """True when a catalogue field is a placeholder rather than a real name."""
@@ -86,6 +98,8 @@ def is_unknown(value: Optional[str]) -> bool:
     if text in UNKNOWN_VALUES:
         return True
     if UNRESOLVED_RANK.search(text) or UNRESOLVED_SPECIES.search(text):
+        return True
+    if PROVISIONAL_SPECIES.search(text) or HYBRID.search(text):
         return True
     return any(
         text == prefix or text.startswith(prefix + "_") or text.startswith(prefix + " ")
