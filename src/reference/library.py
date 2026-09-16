@@ -235,6 +235,39 @@ class ReferenceLibrary:
             self._connection.close()
             self._connection = None
 
+    def coverage(self, marker: str, species: str, genus: str = "") -> Dict[str, int]:
+        """
+        How well placed this library was to name a species: references for
+        the species itself, references for its genus, and how many species
+        of that genus the library holds at all.
+
+        Bourret et al. (2023) grade a species assignment *unreliable due to
+        gaps* when the library lacks its congeners - with one congener
+        sequenced there is nothing for the barcode to be ambiguous about,
+        and the wrong name wins cleanly. These three counts are that grade's
+        raw material, from the catalogue alone; `docs/science/`, section 3.
+        """
+        empty = {"species_references": 0, "genus_references": 0, "genus_species": 0}
+        try:
+            connection = self.connect()
+        except (FileNotFoundError, sqlite3.Error):
+            return empty
+        genus = genus or species.split(" ")[0]
+        try:
+            for_species = connection.execute(
+                "SELECT COUNT(*) FROM reference_library WHERE marker_gene = ? AND species = ?",
+                (marker, species),
+            ).fetchone()[0]
+            for_genus, distinct = connection.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT species) FROM reference_library "
+                "WHERE marker_gene = ? AND genus = ?",
+                (marker, genus),
+            ).fetchone()
+        except sqlite3.Error:
+            return empty
+        return {"species_references": for_species, "genus_references": for_genus,
+                "genus_species": distinct}
+
     def counts_by_marker(self) -> Dict[str, int]:
         """How many reference sequences the catalogue holds for each marker."""
         try:

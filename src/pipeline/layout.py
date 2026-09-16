@@ -34,6 +34,10 @@ TRIMMED = "02_trimmed"
 DEREPLICATED = "03_unique"
 DENOISED = "04_zotus"
 IDENTIFICATION = "05_results"
+#: Written after a run, not by one: the Analysis tab and `python -m
+#: src.analysis` put their tables here, beside the results they describe,
+#: so that a run folder carries everything that was ever said about it.
+ANALYSIS = "06_analysis"
 LOGS = "logs"
 REPORTS = "reports"
 
@@ -72,6 +76,10 @@ def denoised_dir(run_dir: Path, locus: str | None = None) -> Path:
 
 def identification_dir(run_dir: Path) -> Path:
     return Path(run_dir) / IDENTIFICATION
+
+
+def analysis_dir(run_dir: Path) -> Path:
+    return Path(run_dir) / ANALYSIS
 
 
 def logs_dir(run_dir: Path, stage: str | None = None) -> Path:
