@@ -78,7 +78,7 @@ class PipelineConfig:
     # after ranking, so asking for a single hit can return one that is not the
     # best available - and sometimes none at all. Several are requested and the
     # strongest is chosen afterwards.
-    blast_max_target_seqs: int = 10
+    blast_max_target_seqs: int = 500
     blast_evalue: float = 1e-5
 
     # How many sequences go to NCBI in one submission. Their public interface
@@ -210,7 +210,7 @@ class PipelineConfig:
             consensus_threshold=float(
                 data.get("thresholds", {}).get("consensus_threshold", 0.9)
             ),
-            blast_max_target_seqs=data.get("runtime", {}).get("blast_max_target_seqs", 10),
+            blast_max_target_seqs=data.get("runtime", {}).get("blast_max_target_seqs", 500),
             blast_evalue=float(data.get("runtime", {}).get("blast_evalue", 1e-5)),
             merge_reads=data.get("runtime", {}).get("merge_reads", False),
             min_merge_overlap=data.get("runtime", {}).get("min_merge_overlap", 10),

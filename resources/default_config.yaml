@@ -81,11 +81,15 @@ runtime:
   #   "local"     - any other BLAST database, at paths.blast_db.
   blast_mode: "remote"
 
-  # How many database matches to consider per sequence; the strongest is used.
-  # Do not set this to 1. BLAST applies the limit while it searches rather than
-  # after ranking the results, so asking for a single hit can return one that
-  # is not the best match, and sometimes returns nothing at all.
-  blast_max_target_seqs: 10
+  # How many database matches to consider per sequence. The name is decided
+  # by every reference that matched equally well, so this has to be large
+  # enough to hold the whole tie: a well-known species can have hundreds of
+  # identical references, and at 10 the pipeline saw an arbitrary ten of
+  # them - once, ten mislabelled records out of three thousand. Do not set
+  # it to 1 either: BLAST applies the limit while it searches rather than
+  # after ranking, so one hit may not be the best. A call whose tie reaches
+  # this number is marked in the audit log.
+  blast_max_target_seqs: 500
 
   # Matches weaker than this are not reported at all.
   blast_evalue: 1.0e-5

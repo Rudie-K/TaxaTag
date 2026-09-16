@@ -1056,6 +1056,19 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
             f"of the sequence ({rank}), agreed by {agreement:.0%} of "
             f"{len(tied)} equally good reference(s), {entry['size']} reads",
         ])
+        if len(tied) >= config.blast_max_target_seqs:
+            # The tie filled every slot requested, so it is probably larger
+            # and the references that voted are whichever BLAST listed first.
+            # Said here rather than silently, because a consensus over an
+            # arbitrary sample of a tie once named the most abundant sequence
+            # in a dataset from ten mislabelled records out of three thousand.
+            rejected["tie at cap"] = rejected.get("tie at cap", 0) + 1
+            audit_rows.append([
+                entry["sample"], entry["locus"], entry["zotu"], "Tie at cap",
+                f"{len(tied)} equally good references is the maximum requested "
+                f"(blast_max_target_seqs); the tie may be larger, and which "
+                "references voted was BLAST's choice, not the best available.",
+            ])
 
     species_csv = output_dir / layout.FINAL_SPECIES_TABLE
     with open(species_csv, "w", newline="", encoding="utf-8") as handle:
@@ -1103,6 +1116,13 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
             f"little of their length, {rejected['identity']} below the identity "
             f"threshold, {rejected['ambiguous']} too ambiguous to name. "
             f"See {audit_csv.name} for the reason behind every decision."
+        )
+    if rejected.get("tie at cap"):
+        reporter.warning(
+            f"{rejected['tie at cap']} call(s) matched as many references as were "
+            f"requested ({config.blast_max_target_seqs}); their ties may be larger. "
+            "A higher blast_max_target_seqs in the settings lets every equally good "
+            "reference vote."
         )
 
     # Whether lineages came from the local catalogue decides whether the next
