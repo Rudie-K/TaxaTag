@@ -332,6 +332,32 @@ def _limit_rank(rank: str, available: str) -> str:
     return rank if RANK_ORDER.index(rank) <= RANK_ORDER.index(available) else available
 
 
+def _trim_to_rank(name: str, rank: str, lineage: Dict[str, str]) -> Tuple[str, Dict[str, str]]:
+    """
+    A name is never more precise than its rank.
+
+    The identity thresholds can cap the rank below the one the references
+    agreed at: a 98.8% match to five references that all say *Trachurus
+    trachurus* supports the genus, not the species. The name reported must
+    then be the genus, and the lineage below it must go - otherwise one
+    column says "Genus" and the next names a species, and a reader trusts
+    whichever they read first. Decision 0011's intent; found broken by the
+    Sussex Audit's pilot run on 16 September 2026, in four rows of ten
+    samples.
+    """
+    if rank not in RANK_ORDER or not lineage:
+        return name, lineage
+    column = next((c for c, r in LINEAGE_COLUMNS if r == rank), None)
+    if column is None or not lineage.get(column):
+        return name, lineage
+    trimmed, keep = {}, True
+    for other_column, _ in LINEAGE_COLUMNS:
+        trimmed[other_column] = lineage.get(other_column, "") if keep else ""
+        if other_column == column:
+            keep = False
+    return lineage[column], trimmed
+
+
 def _write_query(sequences, path: Path) -> Path:
     """Write a batch of sequences out for BLAST to read."""
     with open(path, "w", encoding="utf-8") as handle:
@@ -997,6 +1023,7 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
                     "as a real sequence without an identification.",
                 ])
             rank = _limit_rank(rank, agreed_rank)
+            name, lineage = _trim_to_rank(name, rank, lineage)
             record = lineages.get(hit["subject"])
             accession = (record.source_accession if record else "") or hit["accession"]
             taxid = ""
