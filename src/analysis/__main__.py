@@ -4,6 +4,7 @@ The analysis tools from the terminal, so that a run made on a cluster can
 be described there too.
 
     python -m src.analysis candidates <run folder> [--library <folder>] [--top 10]
+    python -m src.analysis adjudication <run folder> [--species-list <csv>] [--library <folder>]
 
 `<run folder>` is one of the dated folders under `runs/`. The library is
 read from the run's own `config_used.yaml` unless given, so the candidates
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import yaml
 
+from src.analysis import adjudication as adjudication_module
 from src.analysis import candidates as candidates_module
 from src.reference.library import ReferenceLibrary
 
@@ -41,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     cand.add_argument("run_dir", type=Path, help="a finished run folder (runs/<date>)")
     cand.add_argument("--library", type=Path, help="the TaxaTag reference library the run used")
     cand.add_argument("--top", type=int, default=candidates_module.TOP_N, help="candidates per ZOTU")
+    adj = commands.add_parser("adjudication", help="one row per call with the evidence beside it, and an empty Outcome column")
+    adj.add_argument("run_dir", type=Path, help="a finished run folder (runs/<date>)")
+    adj.add_argument("--library", type=Path, help="the TaxaTag reference library the run used")
+    adj.add_argument("--species-list", type=Path, help="a CSV of species for the region: ScientificName, optional Synonyms and Habitat")
     args = parser.parse_args(argv)
 
     run_dir = args.run_dir.resolve()
@@ -52,14 +58,29 @@ def main(argv: list[str] | None = None) -> int:
         print("no reference library: give --library, or run against a TaxaTag library", file=sys.stderr)
         return 2
 
-    rows = candidates_module.candidate_rows(run_dir, library, args.top)
-    path = candidates_module.write_candidates(run_dir, library, args.top)
-    summary = candidates_module.summarise(rows)
+    if args.command == "candidates":
+        rows = candidates_module.candidate_rows(run_dir, library, args.top)
+        path = candidates_module.write_candidates(run_dir, library, args.top)
+        summary = candidates_module.summarise(rows)
+        print(f"Wrote {path}")
+        print(f"  {summary['zotus']} ZOTU(s), {len(rows)} candidate row(s)")
+        for name, count in summary.items():
+            if name not in ("zotus",) and count:
+                print(f"  {count:5d}  {name or 'unflagged'}")
+        return 0
+
+    species_list = adjudication_module.SpeciesList.load(args.species_list) if args.species_list else None
+    try:
+        path = adjudication_module.write_sheet(run_dir, library, species_list)
+    except FileExistsError as error:
+        print(error, file=sys.stderr)
+        return 3
+    summary = adjudication_module.summarise(adjudication_module.read_sheet(path))
     print(f"Wrote {path}")
-    print(f"  {summary['zotus']} ZOTU(s), {len(rows)} candidate row(s)")
+    print(f"  {summary['calls']} call(s), {summary['need attention']} need attention:")
     for name, count in summary.items():
-        if name not in ("zotus",) and count:
-            print(f"  {count:5d}  {name or 'unflagged'}")
+        if name not in ("calls", "need attention") and count:
+            print(f"  {count:5d}  {name}")
     return 0
 
 
