@@ -534,6 +534,49 @@ def load_accession_taxids(
     return mapping
 
 
+#: Every index the catalogue is expected to have. `create_empty_library` makes
+#: them; `ensure_indexes` adds the ones an older library lacks. `idx_genus`
+#: arrived on 16 September 2026, when building an adjudication sheet for 799
+#: calls took three quarters of an hour: `coverage()` asks for every listed
+#: congener of every genus called, and without it each ask scanned the
+#: 620,115 12S records.
+CATALOGUE_INDEXES = (
+    ("idx_marker", "reference_library", "marker_gene"),
+    ("idx_species", "reference_library", "species"),
+    ("idx_genus", "reference_library", "genus"),
+    ("idx_matrix_taxid", "ncbi_taxonomy_matrix", "tax_id"),
+)
+
+
+def ensure_indexes(library_root: Path, reporter: Optional[Reporter] = None) -> List[str]:
+    """
+    Add any catalogue index a newer TaxaTag expects to an existing library,
+    and say which were added. Read-write, deliberately: the library is
+    opened read-only everywhere else, so this is the one maintenance step
+    a user runs on purpose (`python -m src.reference.cli index`), and it
+    changes no record - only how fast they are found.
+    """
+    reporter = reporter or console_reporter()
+    catalogue = Path(library_root) / CATALOGUE_NAME
+    if not catalogue.exists():
+        raise FileNotFoundError(f"No reference catalogue at {catalogue}")
+    connection = sqlite3.connect(catalogue)
+    try:
+        present = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+        added = []
+        for name, table, column in CATALOGUE_INDEXES:
+            if name in present:
+                continue
+            reporter.info(f"Adding {name} on {table}({column}) - this can take a minute on a large library.")
+            connection.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table}({column})")
+            connection.commit()
+            added.append(name)
+    finally:
+        connection.close()
+    reporter.info("Indexes added: " + (", ".join(added) if added else "none - the library already had them all."))
+    return added
+
+
 def create_empty_library(library_root: Path, reporter: Optional[Reporter] = None) -> Path:
     """Create the catalogue tables for a new, empty reference library."""
     reporter = reporter or console_reporter()
@@ -553,6 +596,7 @@ def create_empty_library(library_root: Path, reporter: Optional[Reporter] = None
         );
         CREATE INDEX IF NOT EXISTS idx_marker ON reference_library(marker_gene);
         CREATE INDEX IF NOT EXISTS idx_species ON reference_library(species);
+        CREATE INDEX IF NOT EXISTS idx_genus ON reference_library(genus);
 
         CREATE TABLE IF NOT EXISTS ncbi_taxonomy_matrix (
             tax_id TEXT PRIMARY KEY,

@@ -26,6 +26,7 @@ from src.reference.build import (
     SourceSpec,
     add_marker,
     create_empty_library,
+    ensure_indexes,
     load_accession_taxids,
 )
 from src.reference.library import ReferenceLibrary
@@ -171,6 +172,15 @@ def command_info(args, reporter) -> int:
     print("-" * 78)
     print(f"{'total':8s} {sum(counts.values()):>14,}\n")
     library.close()
+    return 0
+
+
+def command_index(args, reporter) -> int:
+    try:
+        ensure_indexes(Path(args.library), reporter)
+    except FileNotFoundError as error:
+        print(error, file=sys.stderr)
+        return 1
     return 0
 
 
@@ -364,6 +374,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     create = subparsers.add_parser("create", help="create an empty library")
     create.set_defaults(handler=command_create)
+
+    index = subparsers.add_parser("index", help="add the catalogue indexes a newer TaxaTag expects to an existing library")
+    index.set_defaults(handler=command_index)
 
     recipe = subparsers.add_parser(
         "recipe", help="check, and optionally build, a marker from known sources"
