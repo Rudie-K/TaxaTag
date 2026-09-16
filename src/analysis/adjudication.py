@@ -7,23 +7,44 @@ ones - with the evidence TaxaTag holds laid beside it: the runner-up and
 how far behind it was, the ambiguity flag, how many references the library
 had for the winner and its genus, and, when the user supplies a species
 list for their region, whether the name is on it, under what accepted
-name, and in what habitat. Then three empty columns: `Outcome`,
-`Outcome_Species`, `Note`. TaxaTag never fills them and never removes a
-row. That is the line `docs/considered.md` draws between showing evidence
-and filtering on it, and a test holds it.
+name, and in what habitat. Then four empty columns: `Outcome`,
+`Detection`, `Outcome_Species`, `Note`. TaxaTag never fills them and never
+removes a row. That is the line `docs/considered.md` draws between showing
+evidence and filtering on it, and a test holds it.
 
 `Needs_Attention` says why a row deserves a look, in words, so that a
 reader who only wants the doubtful ones can sort on it - and so that the
-reason is on record when the decision is. The outcome vocabulary is
-Bourret et al.'s (2023), after Bokulich et al. (2018), so that what is
-counted from a filled sheet is comparable with published numbers:
+reason is on record when the decision is.
 
-    Accepted            the call is right (TP)
-    Reassigned          the call is the wrong species; Outcome_Species says which (FP)
-    Under-classified    right, but above species rank (FN)
-    Unresolved          the evidence does not decide it
-    Not a detection     contamination, non-target, foreign DNA, freshwater runoff
-    Method bias         an absence explained by the method, not by assignment
+Two questions are asked of every row, and they are answered apart,
+because the pilot showed they come apart: a pike named perfectly from
+river water in a sea sample is a correct assignment and not a marine
+fish, and a foreign goby named perfectly from DNA that was never in the
+water is a correct assignment and not a detection at all. `Outcome` is
+how the name did, in Bourret et al.'s (2023) words after Bokulich et al.
+(2018), so that what is counted is comparable with published numbers:
+
+    Accepted            right at the rank given, and no evidence names a lower one
+    Reassigned          the wrong species; Outcome_Species says which (FP)
+    Under-classified    right, but the evidence names a lower rank; Outcome_Species says which
+    Unresolved          the evidence cannot judge the name
+
+A correct genus call is *Accepted* at genus, not a failure: Bourret et al.
+report precision and accuracy per rank, and a family that the marker
+cannot split further is still an identification. It is *Under-classified*
+only when something - a regional list, the references' own agreement - names
+a rank the pipeline stopped short of. `Detection` is whether the DNA counts
+for this survey, decided without reference to the name:
+
+    genuine             from the sampled water, of a taxon the survey counts
+    out of scope        from the sampled water, of a taxon the survey does not count
+                        (river runoff in a marine survey; terrestrial; human)
+    spurious            not from the sampled water: contamination, tag-jumping, foreign DNA
+
+What is out of scope for one survey is the result of another, which is why
+the word is not "wrong". "Method bias" - an absence the method explains -
+is a word for a species that has no row, and lives in the comparison with
+an independent survey, not here. `docs/decisions/0026`.
 
 Coverage grades follow Bourret et al.: *gaps* when a congener known from
 the region - one on the user's species list - has no reference in the
@@ -44,8 +65,8 @@ from typing import Dict, List, Optional, Tuple
 from src.analysis import candidates as candidates_module
 from src.pipeline import layout
 
-OUTCOMES = ("Accepted", "Reassigned", "Under-classified", "Unresolved",
-            "Not a detection", "Method bias")
+OUTCOMES = ("Accepted", "Reassigned", "Under-classified", "Unresolved")
+DETECTIONS = ("genuine", "out of scope", "spurious")
 
 #: Below this many references for the winning species, a species-rank
 #: call is worth a look whatever else is true. One reference is one
@@ -58,8 +79,12 @@ COLUMNS = [
     "Flag", "Runner_Up", "Runner_Up_Identity", "Bitscore_Gap_Percent",
     "Species_References", "Genus_References", "Genus_Species", "Coverage", "Missing_Congeners",
     "On_List", "Accepted_Name", "Habitat", "Tied_On_List", "Needs_Attention",
-    "Outcome", "Outcome_Species", "Note",
+    "Outcome", "Detection", "Outcome_Species", "Note",
 ]
+
+#: The columns the person fills. TaxaTag writes them empty and refuses to
+#: rebuild a sheet in which any of them is not.
+DECISION_COLUMNS = ("Outcome", "Detection", "Outcome_Species", "Note")
 
 GRADE_GAPS = "gaps"                 # Bourret: unreliable due to gaps
 GRADE_REPRESENTED = "represented"   # every congener the list knows from the region has references
@@ -254,7 +279,7 @@ def build_sheet(run_dir: Path, library, species_list: Optional[SpeciesList] = No
             "Coverage": grade, "Missing_Congeners": missing,
             "On_List": on_list, "Accepted_Name": accepted, "Habitat": habitat,
             "Tied_On_List": _tied_on_list(cands, species_list) if flag else "",
-            "Needs_Attention": "", "Outcome": "", "Outcome_Species": "", "Note": "",
+            "Needs_Attention": "", "Outcome": "", "Detection": "", "Outcome_Species": "", "Note": "",
         }
         entry["Needs_Attention"] = _attention(entry)
         sheet.append(entry)
@@ -270,8 +295,8 @@ def write_sheet(run_dir: Path, library, species_list: Optional[SpeciesList] = No
     folder = layout.analysis_dir(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "adjudication.csv"
-    if path.exists() and any(r.get("Outcome") for r in read_sheet(path)):
-        raise FileExistsError(f"{path} already carries outcomes; rename it to rebuild")
+    if path.exists() and any(r.get(c) for r in read_sheet(path) for c in DECISION_COLUMNS):
+        raise FileExistsError(f"{path} already carries decisions; rename it to rebuild")
     rows = build_sheet(run_dir, library, species_list)
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS, lineterminator="\n")
@@ -284,7 +309,8 @@ def write_sheet(run_dir: Path, library, species_list: Optional[SpeciesList] = No
         f"library:       {getattr(library, 'root', '')}\n"
         f"species list:  {species_list.source if species_list else '(none given)'}\n"
         "outcomes:      " + " / ".join(OUTCOMES) + "\n"
-        "filled by:     the person adjudicating - TaxaTag writes no outcome\n",
+        "detections:    " + " / ".join(DETECTIONS) + "\n"
+        "filled by:     the person adjudicating - TaxaTag writes no outcome and no detection\n",
         encoding="utf-8",
     )
     return path
