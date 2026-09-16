@@ -66,7 +66,7 @@ SCOPE_GENUINE = "genuine"    # only rows whose Detection is genuine
 TOP_K = (1, 3, 5, 10)
 
 METRIC_COLUMNS = ["Scope", "Rank", "Judged", "TP", "FP", "FN", "Unresolved", "Precision", "Accuracy"]
-CONFIDENT_COLUMNS = ["Sample", "ZOTU", "Call", "Cause", "Outcome", "Detection", "Outcome_Species",
+CONFIDENT_COLUMNS = ["Sample", "ZOTU", "Call", "Cause", "Corroborated", "Outcome", "Detection", "Outcome_Species",
                      "Identity_Percent", "References_Matched", "Species_References", "Genus_References",
                      "Genus_Species", "Reads", "Note"]
 TOP_K_COLUMNS = ["K", "Rows", "Hits", "Fraction"]
@@ -129,19 +129,38 @@ def classify(row: Dict[str, str], rank: str, families: Dict[str, str]) -> str:
     return "unjudged"
 
 
+#: A confident call needs at least this many matching references to count
+#: as *corroborated* - the stricter reading a sensitivity analysis can use.
+CORROBORATED_REFERENCES = 2
+
+
 def is_confident(row: Dict[str, str]) -> bool:
     """
-    Whether a call was made with nothing on the sheet to make a reader
-    doubt it - the calls whose being wrong is the project's phenomenon.
+    Whether the species table gave its reader no reason to doubt the call:
+    a species-rank name with no ambiguity flag. That is the pipeline's own
+    confidence, as a user of the table sees it, and the calls whose being
+    wrong is the Sussex Audit's phenomenon.
 
-    TODO(human): decide what "confident" means for the write-up and return
-    it here. The row is a dict of the sheet's columns as strings: `Flag`
-    ("" when the tied references named one species; "F2 ..." etc. when
-    they did not), `Call_Rank`, `Identity_Percent`, `References_Matched`,
-    `Agreement_Percent`, `Species_References`. See the note in the
-    conversation for the two candidate definitions.
+    Deliberately *not* required: a minimum number of matching references.
+    A species named from one reference is exactly the call Locatelli et
+    al. warn about, and the table presents it with no warning, so a wrong
+    one is confident-but-wrong in the sense that matters. Requiring
+    corroboration would measure a stricter reporting rule the program
+    could adopt (planned item 6), not the rule it has; `is_corroborated`
+    is that stricter reading, kept apart for the comparison. Identity is
+    not repeated here because a species-rank call already cleared its
+    threshold. Sussex Audit decision 05.
     """
-    raise NotImplementedError("is_confident() is the project's definition; see TODO(human)")
+    return row.get("Flag", "") == "" and row.get("Call_Rank", "") == "Species"
+
+
+def is_corroborated(row: Dict[str, str]) -> bool:
+    """Confident, and resting on more than one matching reference."""
+    try:
+        matched = int(row.get("References_Matched") or 0)
+    except ValueError:
+        matched = 0
+    return is_confident(row) and matched >= CORROBORATED_REFERENCES
 
 
 # ---------------------------------------------------------------- the tables
@@ -246,7 +265,9 @@ def confident_but_wrong(rows: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]
     """
     The confident calls that were wrong, each with its cause, and the
     number of confident calls they are out of. Misassignment and foreign
-    DNA are listed together and must be reported apart.
+    DNA are listed together and must be reported apart. Each row also
+    says whether it was corroborated, so the stricter reading can be
+    counted from the same table.
     """
     confident = [r for r in rows if r.get("Outcome") and is_confident(r)]
     wrong = []
@@ -257,8 +278,14 @@ def confident_but_wrong(rows: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]
         elif row.get("Detection") == "spurious":
             cause = CAUSE_FOREIGN
         if cause:
-            wrong.append({**{c: row.get(c, "") for c in CONFIDENT_COLUMNS if c != "Cause"}, "Cause": cause})
+            wrong.append({**{c: row.get(c, "") for c in CONFIDENT_COLUMNS if c not in ("Cause", "Corroborated")},
+                          "Cause": cause, "Corroborated": "yes" if is_corroborated(row) else "no"})
     return wrong, len(confident)
+
+
+def corroborated_count(rows: List[Dict[str, str]]) -> int:
+    """How many judged calls meet the stricter reading - the denominator for it."""
+    return sum(1 for r in rows if r.get("Outcome") and is_corroborated(r))
 
 
 # ---------------------------------------------------------------- files
@@ -282,10 +309,8 @@ def read_candidates(run_dir: Path) -> List[Dict[str, str]]:
 
 def write_audit(run_dir: Path, sheet: Path, out_dir: Optional[Path] = None) -> Dict[str, object]:
     """
-    Read a filled sheet, write the four tables beside it (or into
-    `out_dir`), and return what was written and what was found. The
-    confident-but-wrong table is written only once `is_confident()` has
-    been given its definition; until then the result says so.
+    Read a filled sheet, write the five tables beside it (or into
+    `out_dir`), and return what was written and what was found.
     """
     rows = adjudication_module.read_sheet(sheet)
     candidates = read_candidates(run_dir)
@@ -304,23 +329,25 @@ def write_audit(run_dir: Path, sheet: Path, out_dir: Optional[Path] = None) -> D
         "unjudged": sum(1 for r in rows if not r.get("Outcome")),
         "sources": sheet,
     }
-    try:
-        wrong, confident = confident_but_wrong(rows)
-    except NotImplementedError as pending:
-        result["confident_pending"] = str(pending)
-    else:
-        written["confident_but_wrong"] = _write(folder / "audit-confident-but-wrong.csv", CONFIDENT_COLUMNS, wrong)
-        result["confident"] = confident
-        result["confident_but_wrong"] = {
-            CAUSE_MISASSIGNED: sum(1 for w in wrong if w["Cause"] == CAUSE_MISASSIGNED),
-            CAUSE_FOREIGN: sum(1 for w in wrong if w["Cause"] == CAUSE_FOREIGN),
-        }
+    wrong, confident = confident_but_wrong(rows)
+    written["confident_but_wrong"] = _write(folder / "audit-confident-but-wrong.csv", CONFIDENT_COLUMNS, wrong)
+    result["confident"] = confident
+    result["corroborated"] = corroborated_count(rows)
+    result["confident_but_wrong"] = {
+        CAUSE_MISASSIGNED: sum(1 for w in wrong if w["Cause"] == CAUSE_MISASSIGNED),
+        CAUSE_FOREIGN: sum(1 for w in wrong if w["Cause"] == CAUSE_FOREIGN),
+    }
+    result["corroborated_but_wrong"] = {
+        CAUSE_MISASSIGNED: sum(1 for w in wrong if w["Cause"] == CAUSE_MISASSIGNED and w["Corroborated"] == "yes"),
+        CAUSE_FOREIGN: sum(1 for w in wrong if w["Cause"] == CAUSE_FOREIGN and w["Corroborated"] == "yes"),
+    }
     (folder / "audit-sources.txt").write_text(
         "Where the audit numbers came from\n\n"
         f"sheet:       {sheet}\n"
         f"candidates:  {layout.analysis_dir(run_dir) / 'candidates.csv'} ({'read' if candidates else 'absent - no top-k, families unknown'})\n"
         "definitions: Bourret et al. 2023 after Bokulich et al. 2018; per rank; two scopes (all judged rows, genuine detections)\n"
-        "confident:   " + ("is_confident() in src/analysis/metrics.py" if "confident" in result else "not yet defined") + "\n",
+        "confident:   a species-rank call with no ambiguity flag (is_confident, src/analysis/metrics.py)\n"
+        f"corroborated: confident, with at least {CORROBORATED_REFERENCES} matching references - the stricter reading, reported beside\n",
         encoding="utf-8",
     )
     return result

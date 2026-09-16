@@ -76,12 +76,11 @@ def main(argv: list[str] | None = None) -> int:
         for row in result["table"]:
             if row["Scope"] == metrics_module.SCOPE_ALL:
                 print(f"  {row['Rank']:8s} TP {row['TP']:>4} FP {row['FP']:>4} FN {row['FN']:>4}  precision {row['Precision'] or '-':6s} accuracy {row['Accuracy'] or '-'}")
-        if "confident_pending" in result:
-            print(f"  confident-but-wrong: not counted - {result['confident_pending']}")
-        else:
-            wrong = result["confident_but_wrong"]
-            print(f"  confident calls {result['confident']}: {wrong[metrics_module.CAUSE_MISASSIGNED]} misassigned, "
-                  f"{wrong[metrics_module.CAUSE_FOREIGN]} foreign DNA")
+        wrong, strict = result["confident_but_wrong"], result["corroborated_but_wrong"]
+        print(f"  confident calls {result['confident']}: {wrong[metrics_module.CAUSE_MISASSIGNED]} misassigned, "
+              f"{wrong[metrics_module.CAUSE_FOREIGN]} foreign DNA")
+        print(f"  of them corroborated ({metrics_module.CORROBORATED_REFERENCES}+ references) {result['corroborated']}: "
+              f"{strict[metrics_module.CAUSE_MISASSIGNED]} misassigned, {strict[metrics_module.CAUSE_FOREIGN]} foreign DNA")
         return 0
 
     library = _library_for(run_dir, args.library)
