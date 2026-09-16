@@ -187,6 +187,12 @@ hiddenimports = ["pandas", "yaml", "requests"]
 #: already suspect the installation is broken.
 hiddenimports += ["src.validation", "src.validation.selftest"]
 
+#: Reached today only from the terminal (`python -m src.analysis`), so
+#: nothing in the window imports it and PyInstaller would leave it out;
+#: the Analysis tab will import it, and the build must match the source
+#: it came from before then, not after (`tools/verify_build.py`).
+hiddenimports += ["src.analysis", "src.analysis.candidates", "src.analysis.__main__"]
+
 #: The same reasoning, and here the cost of being wrong is higher. The
 #: update check is reached only from inside MainWindow after the window
 #: is up, and the install record only from inside download.install() - so
