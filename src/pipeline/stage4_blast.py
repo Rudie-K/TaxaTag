@@ -52,7 +52,11 @@ REMOTE_ATTEMPTS = 3
 REMOTE_RETRY_SECONDS = 30
 
 #: The nucleotide collection, which is what a marker sequence is looked up in.
-REMOTE_DATABASE = "nt"
+#: NCBI's own default since 2024: everything in `nt` except the genome-assembly
+#: chromosomes and scaffolds a barcode never matches. Measured identical to `nt`
+#: on 26 hard sequences, 100 hits each (decision 0029); a quarter of the
+#: download for anyone fetching it locally.
+REMOTE_DATABASE = "core_nt"
 
 #: Sequences seen fewer times than this are never worth a database lookup,
 #: regardless of how small the sample was.
