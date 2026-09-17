@@ -323,6 +323,37 @@ class ReferenceLibrary:
         ]
         return ", ".join(parts)
 
+    def lineages_by_taxid(self, taxids: Iterable[str]) -> Dict[str, Dict[str, str]]:
+        """
+        The 7-rank lineage for each NCBI taxid, from the taxonomy the
+        catalogue carries (`ncbi_taxonomy_matrix`, the whole of NCBI's tree
+        at build time). What lets a search against a raw NCBI database -
+        local or remote - vote the way a search of the library does: BLAST
+        reports a taxid for every hit, and this turns it into the ranks the
+        consensus needs (decision 0029). Placeholders are blanked.
+        """
+        wanted = [str(t).strip() for t in dict.fromkeys(taxids) if str(t).strip()]
+        if not wanted:
+            return {}
+        try:
+            connection = self.connect()
+        except (FileNotFoundError, sqlite3.Error):
+            return {}
+        columns = ", ".join(column for column, _ in LINEAGE_COLUMNS)
+        found: Dict[str, Dict[str, str]] = {}
+        for start in range(0, len(wanted), 900):
+            batch = wanted[start:start + 900]
+            try:
+                rows = connection.execute(
+                    f"SELECT tax_id, {columns} FROM ncbi_taxonomy_matrix WHERE tax_id IN ({','.join('?' * len(batch))})",
+                    batch,
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            for row in rows:
+                found[str(row[0])] = {column: clean(value) for (column, _), value in zip(LINEAGE_COLUMNS, row[1:])}
+        return found
+
     def lookup(self, accessions: Iterable[str]) -> Dict[str, ReferenceRecord]:
         """
         Fetch the lineage behind a set of BLAST hits.

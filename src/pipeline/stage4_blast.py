@@ -33,7 +33,7 @@ from typing import Dict, List, Optional, Tuple
 from src.pipeline import layout, ncbi_remote
 from src.pipeline.config import PipelineConfig
 from src.reference import markers as markers_module
-from src.reference.library import LINEAGE_COLUMNS, ReferenceLibrary
+from src.reference.library import LINEAGE_COLUMNS, ReferenceLibrary, ReferenceRecord
 from src.utils.accessions import is_placeholder, normalise_accession
 from src.utils.process import ToolTimeout, blast_path as _database_argument, run_tool
 from src.utils.reporting import Reporter, console_reporter
@@ -299,6 +299,36 @@ def consensus_assignment(
         return winner, rank, trimmed, agreement
 
     return "", "", {}, 0.0
+
+
+def _taxonomy_library(config: PipelineConfig):
+    """The configured reference library, opened only for its taxonomy, or None."""
+    folder = getattr(config, "reference_dir", None)
+    if not folder:
+        return None
+    candidate = ReferenceLibrary(Path(folder))
+    return candidate if candidate.exists else None
+
+
+def lineages_from_taxids(hits: Dict[str, List[Dict]], taxonomy) -> Dict[str, "ReferenceRecord"]:
+    """
+    A lineage record per hit, keyed like the catalogue's, from the taxid
+    BLAST reported for it. A hit that names several taxids ("9606;9598")
+    takes the first, as NCBI's own tools do; a hit whose taxid the taxonomy
+    does not know is left out and cannot vote.
+    """
+    taxids = {hit["taxid"].split(";")[0].strip() for group in hits.values() for hit in group if hit.get("taxid")}
+    by_taxid = taxonomy.lineages_by_taxid(taxids)
+    lineages: Dict[str, ReferenceRecord] = {}
+    for group in hits.values():
+        for hit in group:
+            taxid = (hit.get("taxid") or "").split(";")[0].strip()
+            lineage = by_taxid.get(taxid)
+            if lineage and any(lineage.values()):
+                lineages[hit["subject"]] = ReferenceRecord(
+                    accession=hit["subject"], lineage=lineage, source_accession=hit["accession"]
+                )
+    return lineages
 
 
 def _assign_rank(identity: float, thresholds: Dict[str, float]) -> Optional[str]:
@@ -951,6 +981,27 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
             f"Named {len(lineages)} of {len(subjects)} matched reference sequences "
             "from the local catalogue."
         )
+    elif hits:
+        # A raw NCBI database, local or remote, has no catalogue of its own -
+        # but BLAST reports a taxid for every hit, and a TaxaTag library
+        # carries the whole NCBI taxonomy. With that, every equally good hit
+        # votes here exactly as it would in a library search, instead of the
+        # first-listed hit naming the sequence (decision 0029).
+        taxonomy = _taxonomy_library(config)
+        if taxonomy is not None:
+            lineages = lineages_from_taxids(hits, taxonomy)
+            subjects = {hit["subject"] for group in hits.values() for hit in group}
+            reporter.info(
+                f"Named {len(lineages)} of {len(subjects)} matched sequences by taxid, "
+                f"from the taxonomy in the reference library at {taxonomy.root}; "
+                "every equally good hit votes."
+            )
+        else:
+            reporter.warning(
+                "No reference library is configured, so each sequence takes the name of "
+                "its first-listed best hit rather than the agreement of all of them. "
+                "Choose a library in the settings to let the hits vote."
+            )
 
     species_rows: List[List] = []
     rejected = {"identity": 0, "coverage": 0, "no_match": 0, "ambiguous": 0}
@@ -1026,7 +1077,7 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
             name, lineage = _trim_to_rank(name, rank, lineage)
             record = lineages.get(hit["subject"])
             accession = (record.source_accession if record else "") or hit["accession"]
-            taxid = ""
+            taxid = hit.get("taxid", "") if library is None else ""
         else:
             name = hit["scientific_name"]
             accession = hit["accession"]
