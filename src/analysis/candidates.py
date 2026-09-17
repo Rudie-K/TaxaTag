@@ -76,10 +76,28 @@ def read_hits(path: Path) -> Dict[str, List[Dict]]:
                 "identity": float(record["pident"]),
                 "coverage": float(record["qcovhsp"]),
                 "bitscore": float(record["bitscore"]),
+                # A raw NCBI database reports these; the library's own volumes write N/A.
+                "taxid": (record.get("staxids") or "").split(";")[0].strip(),
             })
     for hits in grouped.values():
         hits.sort(key=lambda h: (-h["bitscore"], -h["identity"], h["subject"]))
     return grouped
+
+
+def _lineages_from_taxids(hits: Dict[str, List[Dict]], library) -> Dict[str, object]:
+    """A lineage record per hit from its taxid, shaped like the catalogue's answer."""
+    from types import SimpleNamespace
+
+    taxids = {h.get("taxid", "") for group in hits.values() for h in group if h.get("taxid") and h["taxid"] not in ("N/A", "0")}
+    by_taxid = library.lineages_by_taxid(taxids) if taxids else {}
+    found = {}
+    for group in hits.values():
+        for h in group:
+            lineage = by_taxid.get(h.get("taxid", ""))
+            if lineage and any(lineage.values()):
+                found[h["subject"]] = SimpleNamespace(accession=h["subject"], lineage=lineage,
+                                                      source_accession=h["subject"].replace("gi|", "").split("|")[-1] if "|" in h["subject"] else h["subject"])
+    return found
 
 
 def read_queries(path: Path) -> Dict[str, str]:
@@ -170,6 +188,11 @@ def candidate_rows(run_dir: Path, library, top_n: int = TOP_N,
         by_sequence = read_queries(query_path)
         subjects = {h["subject"] for group in hits.values() for h in group}
         lineages = library.lookup(subjects)
+        if not lineages and hasattr(library, "lineages_by_taxid"):
+            # The run searched a raw NCBI database (decision 0029): the hits are
+            # NCBI accessions the catalogue does not hold, but each carries a
+            # taxid, and the library's taxonomy names it from that.
+            lineages = _lineages_from_taxids(hits, library)
 
         for row in (r for r in table if r.get("Marker") == marker):
             query_id = by_sequence.get(row.get("Sequence", ""))
