@@ -86,7 +86,7 @@ def read_hits(path: Path) -> Dict[str, List[Dict]]:
 
 def _lineages_from_taxids(hits: Dict[str, List[Dict]], library) -> Dict[str, object]:
     """A lineage record per hit from its taxid, shaped like the catalogue's answer."""
-    from types import SimpleNamespace
+    from src.reference.library import ReferenceRecord
 
     taxids = {h.get("taxid", "") for group in hits.values() for h in group if h.get("taxid") and h["taxid"] not in ("N/A", "0")}
     by_taxid = library.lineages_by_taxid(taxids) if taxids else {}
@@ -95,8 +95,8 @@ def _lineages_from_taxids(hits: Dict[str, List[Dict]], library) -> Dict[str, obj
         for h in group:
             lineage = by_taxid.get(h.get("taxid", ""))
             if lineage and any(lineage.values()):
-                found[h["subject"]] = SimpleNamespace(accession=h["subject"], lineage=lineage,
-                                                      source_accession=h["subject"].replace("gi|", "").split("|")[-1] if "|" in h["subject"] else h["subject"])
+                found[h["subject"]] = ReferenceRecord(accession=h["subject"], lineage=lineage,
+                                                      source_accession=h["subject"].split("|")[-1] if "|" in h["subject"] else h["subject"])
     return found
 
 
