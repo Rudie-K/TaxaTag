@@ -303,11 +303,16 @@ def write_sheet(run_dir: Path, library, species_list: Optional[SpeciesList] = No
         writer.writeheader()
         writer.writerows(rows)
     sources = folder / "adjudication-sources.txt"
+    counted = any(r.get("Species_References") for r in rows)
     sources.write_text(
         "Evidence on the adjudication sheet, and where it came from\n\n"
         f"run:           {run_dir}\n"
         f"library:       {getattr(library, 'root', '')}\n"
-        f"species list:  {species_list.source if species_list else '(none given)'}\n"
+        "coverage:      " + ("counted from the library's catalogue (Species_References, Genus_References, "
+                             "Genus_Species, Coverage, Missing_Congeners)\n" if counted else
+                             "not counted: the run searched a raw NCBI database, which no catalogue describes, "
+                             "so those columns are blank; References_Matched is the evidence of support\n")
+        + f"species list:  {species_list.source if species_list else '(none given)'}\n"
         "outcomes:      " + " / ".join(OUTCOMES) + "\n"
         "detections:    " + " / ".join(DETECTIONS) + "\n"
         "filled by:     the person adjudicating - TaxaTag writes no outcome and no detection\n",

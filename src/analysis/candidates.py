@@ -188,10 +188,14 @@ def candidate_rows(run_dir: Path, library, top_n: int = TOP_N,
         by_sequence = read_queries(query_path)
         subjects = {h["subject"] for group in hits.values() for h in group}
         lineages = library.lookup(subjects)
+        catalogued = bool(lineages)
         if not lineages and hasattr(library, "lineages_by_taxid"):
             # The run searched a raw NCBI database (decision 0029): the hits are
             # NCBI accessions the catalogue does not hold, but each carries a
-            # taxid, and the library's taxonomy names it from that.
+            # taxid, and the library's taxonomy names it from that. The
+            # catalogue's reference counts describe the library, not the
+            # database that was searched, so the coverage columns stay blank
+            # rather than say something true about the wrong database.
             lineages = _lineages_from_taxids(hits, library)
 
         for row in (r for r in table if r.get("Marker") == marker):
@@ -214,7 +218,7 @@ def candidate_rows(run_dir: Path, library, top_n: int = TOP_N,
                 lineage = record.lineage if record else {}
                 species = lineage.get("species", "")
                 genus = lineage.get("genus", "") or (species.split(" ")[0] if species else "")
-                cover = coverage(marker, species, genus) if species else {}
+                cover = coverage(marker, species, genus) if species and catalogued else {}
                 rows.append({
                     "Sample": row["Sample"], "Locus": row.get("Locus", ""), "Marker": marker,
                     "ZOTU": row["ZOTU"], "Reads": row.get("Reads", ""),
