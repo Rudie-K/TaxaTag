@@ -305,6 +305,18 @@ def consensus_assignment(
     return "", "", {}, 0.0
 
 
+def _database_build(database: Path) -> Optional[Dict[str, str]]:
+    """What `tools/fetch_blastdb.py` recorded beside a downloaded NCBI database, if anything."""
+    for candidate in (database.parent / "FETCH.json", database.with_name(database.name + "-FETCH.json")):
+        if candidate.exists():
+            try:
+                import json
+                return json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+    return None
+
+
 def _taxonomy_library(config: PipelineConfig):
     """The configured reference library, opened only for its taxonomy, or None."""
     folder = getattr(config, "reference_dir", None)
@@ -832,6 +844,12 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
                 "species_csv": None,
             }
         reporter.info(f"Searching the local database at {config.blast_db}")
+        build = _database_build(Path(config.blast_db))
+        if build:
+            # A snapshot with a date: the write-up has to cite it, and a run that
+            # cannot say which build it searched cannot be repeated.
+            reporter.info(f"  {build['database']}, NCBI build of {build['ncbi_build']}, "
+                          f"{int(build['sequences']):,} sequences (protocols/searching-ncbi.md)")
     else:
         reporter.info(
             "Searching NCBI over the internet. Their servers queue requests, so "
