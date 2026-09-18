@@ -99,8 +99,16 @@ HYBRID = re.compile(r"\s+x\s+")
 #: binomial ("root", "transposons", "commelinids", "lizard Leishmania").
 #: A second family is capitalised but named after a group rather than a
 #: genus - "Mollicutes bacterium", "Antarctic bacterium DS2-3R",
-#: "Campylobacter-like bacterium" - 38,462 of those. Decision 0030.
-GROUP_NOUN = re.compile(r"\b(bacterium|archaeon|eukaryote|prokaryote|metagenome)\b", re.IGNORECASE)
+#: "Campylobacter-like bacterium" - 38,462 of those. And a third, which
+#: cost the audit 111 species calls on 16S before it was seen: "Scomber
+#: environmental sample", an eDNA record filed under the genus with the
+#: rank species, capitalised and two words, voting against four real
+#: Scomber scombrus records at 100% and taking the call to genus. The
+#: survey of every capitalised name's second word found the rest of that
+#: family - "environmental sample(s)" 1,254, "endosymbiont of" 5,327,
+#: "incertae sedis", sequencing "vector" 11,851, a trailing "group" 811 -
+#: and left "phage" and "virus" alone: those are names. Decision 0030.
+GROUP_NOUN = re.compile(r"\b(bacterium|archaeon|eukaryote|prokaryote|metagenome|environmental samples?|endosymbiont|incertae sedis|vector|group)\b", re.IGNORECASE)
 
 
 def is_unknown(value: Optional[str]) -> bool:
