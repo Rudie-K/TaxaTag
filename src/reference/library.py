@@ -128,6 +128,24 @@ def clean(value: Optional[str]) -> str:
     return "" if is_unknown(value) else str(value).strip()
 
 
+def binomial_or_blank(lineage: Dict[str, str]) -> Dict[str, str]:
+    """
+    A species is a binomial; a one-word "species" is a higher taxon's own
+    name in the species column. NCBI's taxid rows carry it - taxid 237 is
+    the genus Flavobacterium and its species reads "Flavobacterium", taxid
+    1236 is a class and its species reads "Gammaproteobacteria" - 133,254
+    genus-level rows in the taxonomy the library ships. A record filed
+    under a genus therefore voted as a species named after it, and three
+    "Pomatoschistus" records beside ten Pomatoschistus minutus took a real
+    species call down to the genus (decision 0030). Blank, the record
+    abstains at species and votes at the ranks it genuinely has.
+    """
+    species = lineage.get("species", "")
+    if species and " " not in species.strip():
+        lineage["species"] = ""
+    return lineage
+
+
 @dataclass
 class ReferenceRecord:
     """What the catalogue knows about one reference sequence."""
@@ -367,7 +385,7 @@ class ReferenceLibrary:
             except sqlite3.Error:
                 continue
             for row in rows:
-                found[str(row[0])] = {column: clean(value) for (column, _), value in zip(LINEAGE_COLUMNS, row[1:])}
+                found[str(row[0])] = binomial_or_blank({column: clean(value) for (column, _), value in zip(LINEAGE_COLUMNS, row[1:])})
         return found
 
     def lookup(self, accessions: Iterable[str]) -> Dict[str, ReferenceRecord]:
@@ -408,9 +426,9 @@ class ReferenceLibrary:
                 found[row["accession"]] = ReferenceRecord(
                     accession=row["accession"],
                     marker=row["marker_gene"] or "",
-                    lineage={
+                    lineage=binomial_or_blank({
                         column: clean(row[column]) for column, _ in LINEAGE_COLUMNS
-                    },
+                    }),
                     source_accession=_source_accession(row["common_name"]),
                 )
         return found
