@@ -89,12 +89,28 @@ UNRESOLVED_SPECIES = re.compile(r"\s+(sp|spp|sp\.|spp\.)$", re.IGNORECASE)
 PROVISIONAL_SPECIES = re.compile(r"\s(sp|spp|cf|aff|nr)\.?(\s|$)", re.IGNORECASE)
 HYBRID = re.compile(r"\s+x\s+")
 
+#: NCBI ranks "uncultured bacterium", "unidentified shark fin", "marine
+#: metagenome" and "environmental samples" as species, and a search of
+#: core_nt returns them by the thousand: 1,616 of the Sussex Audit's tied
+#: 12S candidates, voting as species against the real names beside them.
+#: They are descriptions, and a description begins with a small letter
+#: where a Latin name begins with a capital - 187,811 of the 2.86 million
+#: species names in the taxonomy do, and not one of a sample of them was a
+#: binomial ("root", "transposons", "commelinids", "lizard Leishmania").
+#: A second family is capitalised but named after a group rather than a
+#: genus - "Mollicutes bacterium", "Antarctic bacterium DS2-3R",
+#: "Campylobacter-like bacterium" - 38,462 of those. Decision 0030.
+GROUP_NOUN = re.compile(r"\b(bacterium|archaeon|eukaryote|prokaryote|metagenome)\b", re.IGNORECASE)
+
 
 def is_unknown(value: Optional[str]) -> bool:
     """True when a catalogue field is a placeholder rather than a real name."""
     if value is None:
         return True
-    text = str(value).strip().lower()
+    original = str(value).strip()
+    if original[:1].islower() or GROUP_NOUN.search(original):
+        return True                       # a description, not a name (decision 0030)
+    text = original.lower()
     if text in UNKNOWN_VALUES:
         return True
     if UNRESOLVED_RANK.search(text) or UNRESOLVED_SPECIES.search(text):

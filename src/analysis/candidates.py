@@ -100,6 +100,24 @@ def _lineages_from_taxids(hits: Dict[str, List[Dict]], library) -> Dict[str, obj
     return found
 
 
+def search_files(results: Path, marker: str) -> Tuple[List[Path], List[Path]]:
+    """
+    The hit and query files stage 4 left for a marker.
+
+    A reference library is searched volume by volume, one file pair per
+    marker (`blast_hits_12S.tsv`, `query_12S.fasta`). A raw NCBI database
+    is one search for every marker at once, so its files are the run-wide
+    `blast_hits_all.tsv` and `query_all.fasta` - or one pair per submission
+    (`_all_001`, `_all_002`, ...) when a remote search was chunked. The
+    Sussex Audit's first local core_nt run built an empty candidates table
+    because only the first shape was looked for.
+    """
+    per_marker = (results / f"blast_hits_{marker}.tsv", results / f"query_{marker}.fasta")
+    if all(path.exists() for path in per_marker):
+        return [per_marker[0]], [per_marker[1]]
+    return sorted(results.glob("blast_hits_all*.tsv")), sorted(results.glob("query_all*.fasta"))
+
+
 def read_queries(path: Path) -> Dict[str, str]:
     """Sequence -> query id, from the FASTA stage 4 searched with."""
     by_sequence: Dict[str, str] = {}
@@ -180,12 +198,15 @@ def candidate_rows(run_dir: Path, library, top_n: int = TOP_N,
         return coverage_cache[key]
 
     for marker in sorted({row["Marker"] for row in table if row.get("Marker")}):
-        hits_path = results / f"blast_hits_{marker}.tsv"
-        query_path = results / f"query_{marker}.fasta"
-        if not hits_path.exists() or not query_path.exists():
-            continue                    # a remote (NCBI) search leaves neither
-        hits = read_hits(hits_path)
-        by_sequence = read_queries(query_path)
+        hit_paths, query_paths = search_files(results, marker)
+        if not hit_paths or not query_paths:
+            continue                    # a search that returned nothing leaves neither
+        hits: Dict[str, List[Dict]] = {}
+        by_sequence: Dict[str, str] = {}
+        for path in hit_paths:
+            hits.update(read_hits(path))
+        for path in query_paths:
+            by_sequence.update(read_queries(path))
         subjects = {h["subject"] for group in hits.values() for h in group}
         lineages = library.lookup(subjects)
         catalogued = bool(lineages)
