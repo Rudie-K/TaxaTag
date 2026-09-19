@@ -139,14 +139,19 @@ def clean(value: Optional[str]) -> str:
 def binomial_or_blank(lineage: Dict[str, str]) -> Dict[str, str]:
     """
     A species is a binomial; a one-word "species" is a higher taxon's own
-    name in the species column. NCBI's taxid rows carry it - taxid 237 is
-    the genus Flavobacterium and its species reads "Flavobacterium", taxid
-    1236 is a class and its species reads "Gammaproteobacteria" - 133,254
-    genus-level rows in the taxonomy the library ships. A record filed
-    under a genus therefore voted as a species named after it, and three
-    "Pomatoschistus" records beside ten Pomatoschistus minutus took a real
-    species call down to the genus (decision 0030). Blank, the record
-    abstains at species and votes at the ranks it genuinely has.
+    name in the species column. The taxonomy matrix the library ships
+    carries it - taxid 237 is the genus Flavobacterium and its species
+    reads "Flavobacterium", taxid 1236 is a class and its species reads
+    "Gammaproteobacteria" - 133,254 genus-level rows. That is the build
+    script's flattening, not NCBI's: `rankedlineage.dmp` leaves the species
+    column blank for a genus node (checked 20 September 2026 against the
+    dump the matrix was built from). A record filed under a genus therefore
+    voted as a species named after it, and three "Pomatoschistus" records
+    beside ten Pomatoschistus minutus took a real species call down to the
+    genus (decision 0030). Blank, the record abstains at species and votes
+    at the ranks it genuinely has. The guard stays after the matrix is
+    rebuilt (planned item 11): a one-word species is wrong wherever it
+    comes from.
     """
     species = lineage.get("species", "")
     if species and " " not in species.strip():
