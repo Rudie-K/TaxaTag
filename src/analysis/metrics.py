@@ -288,6 +288,34 @@ def corroborated_count(rows: List[Dict[str, str]]) -> int:
     return sum(1 for r in rows if r.get("Outcome") and is_corroborated(r))
 
 
+COULD_BE_COLUMNS = ["Sample", "ZOTU", "Call", "Call_Rank", "Could_Be", "Outcome", "Detection"]
+
+
+def could_be_table(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """
+    The calls the evidence leaves between two or more listed taxa.
+
+    A tie among references that holds two species from the user's list is
+    not a failure of the library and not a name: it is the measurement a
+    survey most wants and least often sees - that the marker, on this
+    fragment, cannot tell these species apart, and the region has both. The
+    Sussex Audit asked for this as a category of result in its own right
+    (its decision 05, 19 September 2026). Here it is what the sheet itself
+    can see: `Tied_On_List` with two or more names, or a `Could_Be` column
+    the adjudicator filled from evidence beyond the library.
+    """
+    out = []
+    for r in rows:
+        given = r.get("Could_Be", "")
+        tied = [t.strip() for t in r.get("Tied_On_List", "").split("|") if t.strip()]
+        names = given if given else (" | ".join(tied) if len(tied) >= 2 else "")
+        if names:
+            out.append({"Sample": r.get("Sample", ""), "ZOTU": r.get("ZOTU", ""), "Call": r.get("Call", ""),
+                        "Call_Rank": r.get("Call_Rank", ""), "Could_Be": names,
+                        "Outcome": r.get("Outcome", ""), "Detection": r.get("Detection", "")})
+    return out
+
+
 # ---------------------------------------------------------------- files
 
 
@@ -323,6 +351,7 @@ def write_audit(run_dir: Path, sheet: Path, out_dir: Optional[Path] = None) -> D
         "by_sample": _write(folder / "audit-by-sample.csv", BY_SAMPLE_COLUMNS, by_sample_table(rows, families)),
         "breakdown": _write(folder / "audit-breakdown.csv", BREAKDOWN_COLUMNS, breakdown_table(rows)),
         "top_k": _write(folder / "audit-top-k.csv", TOP_K_COLUMNS, top_k_table(rows, candidates)),
+        "could_be": _write(folder / "audit-could-be.csv", COULD_BE_COLUMNS, could_be_table(rows)),
     }
     result: Dict[str, object] = {
         "written": written, "table": table, "rows": len(rows),
@@ -341,6 +370,7 @@ def write_audit(run_dir: Path, sheet: Path, out_dir: Optional[Path] = None) -> D
     # species name - typically because a fuller reference set shows the fragment
     # shared with another species. Not a false positive, and not nothing either.
     result["confident_unsupported"] = sum(1 for r in rows if r.get("Outcome") == "Unresolved" and is_confident(r))
+    result["could_be"] = len(could_be_table(rows))
     result["corroborated_but_wrong"] = {
         CAUSE_MISASSIGNED: sum(1 for w in wrong if w["Cause"] == CAUSE_MISASSIGNED and w["Corroborated"] == "yes"),
         CAUSE_FOREIGN: sum(1 for w in wrong if w["Cause"] == CAUSE_FOREIGN and w["Corroborated"] == "yes"),

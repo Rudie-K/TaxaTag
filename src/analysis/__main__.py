@@ -102,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
               f"{wrong[metrics_module.CAUSE_FOREIGN]} foreign DNA, {result['confident_unsupported']} unsupported (unresolved)")
         print(f"  of them corroborated ({metrics_module.CORROBORATED_REFERENCES}+ references) {result['corroborated']}: "
               f"{strict[metrics_module.CAUSE_MISASSIGNED]} misassigned, {strict[metrics_module.CAUSE_FOREIGN]} foreign DNA")
+        print(f"  calls the evidence leaves between two or more listed taxa: {result['could_be']} (audit-could-be.csv)")
         return 0
 
     library = _library_for(run_dir, args.library)
