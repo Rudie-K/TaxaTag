@@ -6,6 +6,7 @@ be described there too.
     python -m src.analysis candidates <run folder> [--library <folder>] [--top 10]
     python -m src.analysis adjudication <run folder> [--species-list <csv>] [--library <folder>]
     python -m src.analysis metrics <run folder> [--sheet <filled csv>] [--out <folder>]
+    python -m src.analysis coverage --library <folder> --species-list <csv> [--out <csv>] [--markers 12S 16S]
 
 `<run folder>` is one of the dated folders under `runs/`. The library is
 read from the run's own `config_used.yaml` unless given, so the candidates
@@ -24,6 +25,7 @@ import yaml
 
 from src.analysis import adjudication as adjudication_module
 from src.analysis import candidates as candidates_module
+from src.analysis import coverage as coverage_module
 from src.analysis import metrics as metrics_module
 from src.pipeline import layout
 from src.reference.library import ReferenceLibrary
@@ -56,7 +58,26 @@ def main(argv: list[str] | None = None) -> int:
     met.add_argument("run_dir", type=Path, help="the run the sheet came from (for its candidates file)")
     met.add_argument("--sheet", type=Path, help="the filled sheet, if not the run's own 06_analysis/adjudication.csv")
     met.add_argument("--out", type=Path, help="write the tables here instead of into the run's 06_analysis/")
+    cov = commands.add_parser("coverage", help="which species on a list the library can name at all, per marker (needs no run)")
+    cov.add_argument("--library", type=Path, required=True, help="a TaxaTag reference library folder")
+    cov.add_argument("--species-list", type=Path, required=True, help="a CSV of species: ScientificName, optional Synonyms")
+    cov.add_argument("--out", type=Path, help="write the table here (default: coverage.csv beside the list)")
+    cov.add_argument("--markers", nargs="+", help="markers to report (default: every marker the library holds)")
     args = parser.parse_args(argv)
+
+    if args.command == "coverage":
+        library = ReferenceLibrary(args.library.resolve())
+        if not library.exists:
+            print(f"no reference library at {args.library}", file=sys.stderr)
+            return 2
+        species_list = adjudication_module.SpeciesList.load(args.species_list.resolve())
+        markers = args.markers or library.available_markers()
+        out = (args.out or args.species_list.resolve().with_name("coverage.csv"))
+        rows = coverage_module.write_coverage(library, species_list, markers, out)
+        print(f"Wrote {out}")
+        for marker, counts in coverage_module.summarise(rows).items():
+            print(f"  {marker}: {counts['named']} of {counts['total']} species named, {counts['genus']} to the genus only, {counts['absent']} absent")
+        return 0
 
     run_dir = args.run_dir.resolve()
     if not (run_dir / "05_results" / "species_composition.csv").exists():
