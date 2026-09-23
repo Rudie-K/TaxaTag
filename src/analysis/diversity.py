@@ -91,10 +91,35 @@ def read_table(run_dir: Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def _counted(rows: List[Dict[str, str]], basis: str, keep_contaminants: bool):
+def sequenced_samples(run_dir: Path, table: List[Dict[str, str]]) -> Dict[str, set]:
     """
-    One sample's rows (one locus) sorted into what is counted and what is
-    set aside. Returns ({taxon: reads}, {reason: reads}, unidentified ZOTUs).
+    Every sample that was sequenced, per locus. The species table holds only
+    samples with at least one row, so a sample whose reads were all
+    discarded would vanish from it - and a sample that vanishes is a sample
+    whose richness of zero is never reported, or a replicate that is never
+    counted. The dereplication report lists every sample with its reads.
+    """
+    found: Dict[str, set] = defaultdict(set)
+    for row in table:
+        found[row["Locus"]].add(row["Sample"])
+    report = layout.report_csv(run_dir, "dereplication")
+    if report.exists():
+        with open(report, encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                try:
+                    if int(row.get("Total_Reads") or 0) > 0:
+                        found[row["Locus"]].add(row["Sample"])
+                except (KeyError, ValueError):
+                    continue
+    return found
+
+
+def _calls(rows: List[Dict[str, str]], basis: str, keep_contaminants: bool):
+    """
+    One sample's rows (one locus) as calls, before folding: ({taxon: reads},
+    {taxon: its name at every rank}, {reason: reads set aside}, unidentified
+    ZOTUs). Kept apart from `_fold` so that replicates can be pooled first
+    and folded together.
     """
     aside = {"Unidentified_Reads": 0, "Contaminant_Reads": 0,
              "Folded_Reads": 0, "Coarser_Reads": 0}
@@ -122,25 +147,35 @@ def _counted(rows: List[Dict[str, str]], basis: str, keep_contaminants: bool):
             taxon = (fixed, _name_at(row, fixed))
         calls[taxon] += reads
         lineage.setdefault(taxon, {r: _name_at(row, r) for r in RANK_ORDER})
+    return dict(calls), lineage, aside, unidentified
 
+
+def folded_away(calls: Iterable[Taxon], lineage: Dict[Taxon, Dict[str, str]]) -> set:
+    """
+    The calls the folding rule does not count: those with something finer
+    named inside them. `lineage` holds each call's name at every rank, so
+    "inside" is "has this call's name at this call's rank".
+    """
+    calls = list(calls)
+    return {
+        (rank, name) for rank, name in calls
+        if any(_rank_index(other_rank) > _rank_index(rank)
+               and lineage[(other_rank, other_name)].get(rank) == name
+               for other_rank, other_name in calls)
+    }
+
+
+def _counted(rows: List[Dict[str, str]], basis: str, keep_contaminants: bool):
+    """
+    One sample's rows (one locus) sorted into what is counted and what is
+    set aside. Returns ({taxon: reads}, {reason: reads}, unidentified ZOTUs).
+    """
+    calls, lineage, aside, unidentified = _calls(rows, basis, keep_contaminants)
     if basis != MIXED:
-        return dict(calls), aside, unidentified
-
-    # The folding rule: a call counts only when nothing finer was named
-    # inside it. `lineage` holds each call's name at every rank, so "inside"
-    # is "has this call's name at this call's rank".
-    counted = {}
-    for (rank, name), reads in calls.items():
-        finer = any(
-            _rank_index(other_rank) > _rank_index(rank)
-            and lineage[(other_rank, other_name)].get(rank) == name
-            for (other_rank, other_name) in calls
-        )
-        if finer:
-            aside["Folded_Reads"] += reads
-        else:
-            counted[(rank, name)] = reads
-    return counted, aside, unidentified
+        return calls, aside, unidentified
+    folded = folded_away(calls, lineage)
+    aside["Folded_Reads"] += sum(calls[t] for t in folded)
+    return {t: r for t, r in calls.items() if t not in folded}, aside, unidentified
 
 
 def hill_numbers(reads: Iterable[int]) -> Dict[str, Optional[float]]:
@@ -185,9 +220,14 @@ def describe(run_dir: Path, basis: str = MIXED, keep_contaminants: bool = False)
         raise ValueError(f"rank must be {MIXED} or one of {', '.join(FIXED_RANKS)}")
     by_sample: Dict[Tuple[str, str], List[Dict[str, str]]] = defaultdict(list)
     markers: Dict[str, str] = {}
-    for row in read_table(run_dir):
+    table = read_table(run_dir)
+    for row in table:
         by_sample[(row["Locus"], row["Sample"])].append(row)
         markers[row["Locus"]] = row.get("Marker", "")
+    for locus, samples in sequenced_samples(run_dir, table).items():
+        markers.setdefault(locus, "")
+        for sample in samples:
+            by_sample.setdefault((locus, sample), [])
 
     summary, taxa_of, reads_of = [], {}, {}
     for (locus, sample), rows in sorted(by_sample.items()):

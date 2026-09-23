@@ -8,6 +8,7 @@ be described there too.
     python -m src.analysis metrics <run folder> [--sheet <filled csv>] [--out <folder>]
     python -m src.analysis coverage --library <folder> --species-list <csv> [--out <csv>] [--markers 12S 16S]
     python -m src.analysis diversity <run folder> [--rank species|genus|family] [--keep-contaminants] [--out <folder>]
+                                      [--sample-sheet <csv> [--sample-column Run] [--site-column Site]]
 
 `<run folder>` is one of the dated folders under `runs/`. The library is
 read from the run's own `config_used.yaml` unless given, so the candidates
@@ -30,6 +31,7 @@ from src.analysis import candidates as candidates_module
 from src.analysis import coverage as coverage_module
 from src.analysis import diversity as diversity_module
 from src.analysis import metrics as metrics_module
+from src.analysis import sites as sites_module
 from src.pipeline import layout
 from src.reference.library import ReferenceLibrary
 
@@ -71,6 +73,9 @@ def main(argv: list[str] | None = None) -> int:
     div.add_argument("--rank", choices=diversity_module.FIXED_RANKS, help="count every call at this one rank (default: each call at its finest rank, nested calls folded)")
     div.add_argument("--keep-contaminants", action="store_true", help="count the likely contaminants (human, livestock, pets) instead of setting them aside")
     div.add_argument("--out", type=Path, help="write the tables here instead of into the run's 06_analysis/")
+    div.add_argument("--sample-sheet", type=Path, help="a CSV naming each sample's site; pools replicates into sites")
+    div.add_argument("--sample-column", default="Sample", help="the sheet column holding the run's sample names (default: Sample)")
+    div.add_argument("--site-column", default="Site", help="the sheet column naming each sample's site (default: Site)")
     args = parser.parse_args(argv)
 
     if args.command == "coverage":
@@ -94,6 +99,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "diversity":
         basis = args.rank or diversity_module.MIXED
+        sheet = None
+        if args.sample_sheet:
+            try:
+                sheet = sites_module.SampleSheet.load(args.sample_sheet.resolve(), args.sample_column, args.site_column)
+                sites_module.pool(run_dir, sheet, basis, args.keep_contaminants)
+            except sites_module.SheetError as error:
+                print(error, file=sys.stderr)
+                return 2
         written = diversity_module.write_diversity(run_dir, basis, args.keep_contaminants, args.out)
         for path in written.values():
             print(f"Wrote {path}")
@@ -101,6 +114,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {row['Locus']:14s} {row['Sample']:14s} richness {row['Richness']:>3}  "
                   f"Shannon {diversity_module._format(row['Shannon_Diversity']) or '-':>7}  "
                   f"Simpson {diversity_module._format(row['Simpson_Diversity']) or '-':>7}")
+        if sheet is not None:
+            result = sites_module.write_sites(run_dir, sheet, basis, args.keep_contaminants, args.out)
+            for path in result["written"].values():
+                print(f"Wrote {path}")
+            for heading, samples in result["tables"]["disagreements"].items():
+                if samples:
+                    print(f"  samples {heading}: {len(samples)}")
+            for locus in result["unequal"]:
+                print(f"  {locus}: sites pooled different numbers of replicates - compare with care (see the notes)")
         return 0
 
     if args.command == "metrics":
