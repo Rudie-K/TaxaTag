@@ -60,7 +60,7 @@ class Condition:
 
 
 _TABLE = (
-    Condition("run-unrecorded", WARNING, NAMES, "decisions 0027-0030",
+    Condition("run-unrecorded", WARNING, NAMES, "decisions 0027-0030 and 0036",
               "This run does not record which TaxaTag made it, so it was made by 1.0.0 or an "
               "earlier copy. Its names may carry faults fixed since; re-running it from the "
               "search stage gives current names."),

@@ -285,8 +285,8 @@ def run_stage5(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
     # the case it was built for is a 199-base 16S sequence matching ten
     # references at 100% identity that agree on no name at all. It still
     # carries an Accession, because knowing which reference it matched is
-    # useful, and that accession belongs to whichever of the ten BLAST
-    # happened to list first.
+    # useful. That accession is only the best-scoring of the ten (decision
+    # 0036), no more the answer than any other.
     #
     # Looking that accession up undoes the whole decision one stage later. On
     # a real run it named 81 of 82 unidentified records, and made a Chinese

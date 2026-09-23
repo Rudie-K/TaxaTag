@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from src.pipeline import layout
-from src.pipeline.stage4_blast import BLAST_FIELDS, TIE_MARGIN
+from src.pipeline.stage4_blast import BLAST_FIELDS, TIE_MARGIN, evidence_order
 
 #: How many candidates to keep per ZOTU. Ten is what people ask for; the
 #: hits file holds the rest.
@@ -80,7 +80,7 @@ def read_hits(path: Path) -> Dict[str, List[Dict]]:
                 "taxid": (record.get("staxids") or "").split(";")[0].strip(),
             })
     for hits in grouped.values():
-        hits.sort(key=lambda h: (-h["bitscore"], -h["identity"], h["subject"]))
+        hits.sort(key=evidence_order)
     return grouped
 
 

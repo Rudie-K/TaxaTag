@@ -27,6 +27,7 @@ import csv
 import re
 import time
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -84,6 +85,13 @@ TIE_MARGIN = 0.01
 #: so a set of references that agree only at phylum or kingdom has not
 #: identified anything.
 REPORTABLE_RANKS = {"Family", "Genus", "Species"}
+
+#: What can become of a sequence once its hits are read. The last three are
+#: discarded, and named like the counts the run reports them under.
+REPORTED = "reported"
+NO_MATCH = "no_match"
+TOO_SHORT = "coverage"
+TOO_DISTANT = "identity"
 
 
 def _read_fasta(path: Path) -> List[Dict]:
@@ -239,8 +247,38 @@ def equally_good(hits: List[Dict], margin: float = TIE_MARGIN) -> List[Dict]:
     return [hit for hit in hits if hit["bitscore"] >= cutoff]
 
 
+def evidence_order(hit: Dict) -> Tuple[float, float, float, str]:
+    """
+    The order a set of hits is read in: score, identity, coverage, then name.
+
+    BLAST lists equal scores in the order the database stores them (Shah et
+    al. 2019), which is no order at all, and anything that reads "the first
+    one" inherits it. This order is the same on every run, and the name
+    decides only between references the evidence cannot tell apart. It is
+    also the candidates file's, so the reference the species table reports
+    is the first of its tie there that voted for the call.
+    """
+    return (-hit["bitscore"], -hit["identity"], -hit["coverage"], hit["subject"])
+
+
+def _supports(hit: Dict, rank: str, thresholds: Optional[Dict[str, float]]) -> bool:
+    """
+    Whether a reference matched closely enough to name this rank.
+
+    At 98.8% a reference says what genus a sequence is, not what species;
+    below the family threshold it says nothing. Ranks above family ask no
+    more than family does. Without thresholds, every reference is taken to
+    support every rank, which is how references voted before decision 0036.
+    """
+    if thresholds is None:
+        return True
+    finest = _assign_rank(hit["identity"], thresholds)
+    return finest is not None and RANK_ORDER.index(rank) <= RANK_ORDER.index(finest)
+
+
 def consensus_assignment(
-    tied: List[Dict], lineages: Dict, threshold: float
+    tied: List[Dict], lineages: Dict, threshold: float,
+    thresholds: Optional[Dict[str, float]] = None,
 ) -> Tuple[str, str, Dict[str, str], float]:
     """
     Agree on a name across every reference that matched equally well.
@@ -251,11 +289,16 @@ def consensus_assignment(
     spiders in equal measure is none of them, and saying so is more useful
     than picking whichever BLAST listed first.
 
+    Given the identity thresholds, each reference votes only at the ranks
+    its own identity supports (decision 0036), as the pipelines in the
+    literature apply their thresholds hit by hit. Without them every
+    reference votes at every rank it is named at.
+
     Returns the name, the rank it was agreed at, the lineage behind it, and
     how strongly the references agreed.
     """
-    records = [lineages[hit["subject"]] for hit in tied if hit["subject"] in lineages]
-    if not records:
+    voters = [(hit, lineages[hit["subject"]]) for hit in tied if hit["subject"] in lineages]
+    if not voters:
         return "", "", {}, 0.0
 
     # Whether the references actually contradicted each other, as opposed to
@@ -268,8 +311,12 @@ def consensus_assignment(
     for column, rank in reversed(LINEAGE_COLUMNS):
         # Only references that are themselves named at this rank get a say.
         # A reference identified no further than its class should not veto a
-        # species that every other reference agrees on.
-        named = [r.lineage.get(column, "") for r in records if r.lineage.get(column, "")]
+        # species that every other reference agrees on. Nor should one that
+        # matched too distantly to name the rank, whatever it is named.
+        named = [
+            record.lineage.get(column, "") for hit, record in voters
+            if record.lineage.get(column, "") and _supports(hit, rank, thresholds)
+        ]
         if not named:
             continue
 
@@ -290,7 +337,9 @@ def consensus_assignment(
             break
 
         lineage = next(
-            (r.lineage for r in records if r.lineage.get(column) == winner), {}
+            (record.lineage for hit, record in voters
+             if record.lineage.get(column) == winner and _supports(hit, rank, thresholds)),
+            {},
         )
         # Nothing below the agreed rank can be trusted, so it is dropped
         # rather than carried over from whichever record happened to be picked.
@@ -402,6 +451,103 @@ def _trim_to_rank(name: str, rank: str, lineage: Dict[str, str]) -> Tuple[str, D
         if other_column == column:
             keep = False
     return lineage[column], trimmed
+
+
+@dataclass
+class Identification:
+    """
+    What one sequence was called, and which reference the table shows for it.
+
+    `outcome` is REPORTED, or one of the three reasons for a discard, when
+    `hit` is the reference that came closest to passing. `tied` is every
+    equally good reference, whether or not it could vote; `voters` is how
+    many voted at the rank the call was agreed at.
+    """
+    outcome: str
+    hit: Optional[Dict] = None
+    tied: List[Dict] = field(default_factory=list)
+    name: str = ""
+    rank: str = ""
+    lineage: Dict[str, str] = field(default_factory=dict)
+    agreement: float = 0.0
+    voters: int = 0
+
+
+def identify_sequence(
+    group: List[Dict], lineages: Dict, thresholds: Dict[str, float],
+    min_coverage: float, agreement_threshold: float,
+) -> Identification:
+    """
+    What one sequence is called, from every hit it had.
+
+    Each equally good reference is judged by its own coverage and its own
+    identity, never by whichever one BLAST listed first (decision 0036).
+    The Sussex Audit's Zotu83 matched five *Trisopterus luscus* references
+    at one score, four at 99.38% and one at 98.78% over a longer alignment.
+    The 98.78% one was listed first, and its identity alone capped a
+    unanimous species call at genus.
+
+    So a reference covering too little of the sequence, or matching below
+    the family threshold, does not vote at all, and one below the species
+    threshold still votes for its genus. A call is discarded only when no
+    equally good reference passes. The reference reported is the
+    best-scoring one that voted for the call, so the identity printed
+    always supports the rank beside it.
+    """
+    if not group:
+        return Identification(NO_MATCH)
+    tied = equally_good(sorted(group, key=evidence_order))
+
+    # Coverage first: a short alignment can carry a perfect identity, and
+    # judging on identity alone is how a fragment becomes a confident false
+    # species.
+    covering = [hit for hit in tied if hit["coverage"] >= min_coverage]
+    if not covering:
+        closest = min(tied, key=lambda hit: (-hit["coverage"], evidence_order(hit)))
+        return Identification(TOO_SHORT, hit=closest, tied=tied)
+
+    qualified = [hit for hit in covering if _assign_rank(hit["identity"], thresholds)]
+    if not qualified:
+        closest = min(covering, key=lambda hit: (-hit["identity"], evidence_order(hit)))
+        return Identification(TOO_DISTANT, hit=closest, tied=tied)
+
+    if not lineages:
+        # Nothing to vote with, so the best-scoring reference that passed
+        # names it - chosen the same way on every run.
+        hit = qualified[0]
+        return Identification(
+            REPORTED, hit=hit, tied=tied, name=hit["scientific_name"],
+            rank=_assign_rank(hit["identity"], thresholds), agreement=1.0,
+        )
+
+    # Every reference that matched equally well gets a say, rather than
+    # whichever one BLAST happened to list first.
+    name, agreed_rank, lineage, agreement = consensus_assignment(
+        qualified, lineages, agreement_threshold, thresholds
+    )
+    if not name:
+        return Identification(
+            REPORTED, hit=qualified[0], tied=tied,
+            name=UNIDENTIFIED_NAME, rank=UNIDENTIFIED_RANK,
+        )
+
+    column = next(c for c, r in LINEAGE_COLUMNS if r == agreed_rank)
+    voting = [
+        hit for hit in qualified
+        if hit["subject"] in lineages and lineages[hit["subject"]].lineage.get(column)
+        and _supports(hit, agreed_rank, thresholds)
+    ]
+    hit = next(h for h in voting if lineages[h["subject"]].lineage[column] == name)
+    # The vote already kept each reference to the ranks it supports, so
+    # these change nothing today. They are what guarantees the table never
+    # prints a rank the identity beside it does not support.
+    rank = _assign_rank(hit["identity"], thresholds)
+    rank = _limit_rank(rank, agreed_rank)
+    name, lineage = _trim_to_rank(name, rank, lineage)
+    return Identification(
+        REPORTED, hit=hit, tied=tied, name=name, rank=rank,
+        lineage=lineage, agreement=agreement, voters=len(voting),
+    )
 
 
 def _write_query(sequences, path: Path) -> Path:
@@ -1021,7 +1167,7 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
         else:
             reporter.warning(
                 "No reference library is configured, so each sequence takes the name of "
-                "its first-listed best hit rather than the agreement of all of them. "
+                "its best-scoring hit rather than the agreement of all equally good ones. "
                 "Choose a library in the settings to let the hits vote."
             )
 
@@ -1030,31 +1176,29 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
     threshold = float(config.consensus_threshold)
 
     for entry in kept:
-        group = hits.get(entry["query_id"]) or []
-        hit = group[0] if group else None
-        if hit is None:
+        call = identify_sequence(
+            hits.get(entry["query_id"]) or [], lineages, thresholds, min_coverage, threshold
+        )
+        hit, tied = call.hit, call.tied
+        if call.outcome == NO_MATCH:
             rejected["no_match"] += 1
             audit_rows.append([
                 entry["sample"], entry["locus"], entry["zotu"], "No match",
                 "Nothing in the database matched this sequence",
             ])
             continue
-
-        # Coverage is checked first: a short alignment can carry a perfect
-        # identity, and judging on identity alone is how a fragment becomes a
-        # confident false species.
-        if hit["coverage"] < min_coverage:
+        if call.outcome == TOO_SHORT:
             rejected["coverage"] += 1
             audit_rows.append([
                 entry["sample"], entry["locus"], entry["zotu"], "Discarded",
                 f"Only {hit['coverage']:.0f}% of the sequence took part in the match, "
                 f"below the {min_coverage:.0f}% minimum (identity was "
-                f"{hit['identity']:.2f}% over {hit['alignment_length']} bp)",
+                f"{hit['identity']:.2f}% over {hit['alignment_length']} bp"
+                + (f"; no other of the {len(tied)} equally good references covered more)"
+                   if len(tied) > 1 else ")"),
             ])
             continue
-
-        rank = _assign_rank(hit["identity"], thresholds)
-        if rank is None:
+        if call.outcome == TOO_DISTANT:
             rejected["identity"] += 1
             audit_rows.append([
                 entry["sample"], entry["locus"], entry["zotu"], "Discarded",
@@ -1063,48 +1207,41 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
             ])
             continue
 
-        tied = equally_good(group)
-        agreement = 1.0
+        name, rank, lineage, agreement = call.name, call.rank, call.lineage, call.agreement
+        if rank == UNIDENTIFIED_RANK:
+            # Reported, not discarded. This sequence matched real references
+            # well enough to pass both thresholds - it is biology, not an
+            # artefact - and the only thing missing is a name everyone
+            # agrees on. Dropping it silently loses the one fact a person
+            # validating a dataset most needs: that the sequence is genuine.
+            #
+            # The same match found through NCBI has always been reported, as
+            # "Unnamed sequence ...". Discarding it only when the library is
+            # searched made the answer depend on where the search happened
+            # rather than on the data.
+            rejected["ambiguous"] += 1
+            audit_rows.append([
+                entry["sample"], entry["locus"], entry["zotu"], "Unidentified",
+                f"Matched {len(tied)} reference sequence(s) at "
+                f"{hit['identity']:.2f}% over {hit['coverage']:.0f}% of its "
+                "length, but they carry no name they agree on. Reported "
+                "as a real sequence without an identification.",
+            ])
 
         if lineages:
-            # Every reference that matched equally well gets a say, rather
-            # than whichever one BLAST happened to list first.
-            name, agreed_rank, lineage, agreement = consensus_assignment(
-                tied, lineages, threshold
-            )
-            if not name:
-                # Reported, not discarded. This sequence matched real
-                # references well enough to pass both thresholds - it is
-                # biology, not an artefact - and the only thing missing is a
-                # name everyone agrees on. Dropping it silently loses the one
-                # fact a person validating a dataset most needs: that the
-                # sequence is genuine.
-                #
-                # The same match found through NCBI has always been reported,
-                # as "Unnamed sequence ...". Discarding it only when the
-                # library is searched made the answer depend on where the
-                # search happened rather than on the data.
-                rejected["ambiguous"] += 1
-                name = UNIDENTIFIED_NAME
-                agreed_rank = UNIDENTIFIED_RANK
-                lineage = {}
-                audit_rows.append([
-                    entry["sample"], entry["locus"], entry["zotu"], "Unidentified",
-                    f"Matched {len(tied)} reference sequence(s) at "
-                    f"{hit['identity']:.2f}% over {hit['coverage']:.0f}% of its "
-                    "length, but they carry no name they agree on. Reported "
-                    "as a real sequence without an identification.",
-                ])
-            rank = _limit_rank(rank, agreed_rank)
-            name, lineage = _trim_to_rank(name, rank, lineage)
             record = lineages.get(hit["subject"])
             accession = (record.source_accession if record else "") or hit["accession"]
             taxid = hit.get("taxid", "") if library is None else ""
+            support = (
+                f"agreed by {agreement:.0%} of the {call.voters} reference(s) able to "
+                f"name that rank, of {len(tied)} equally good"
+                if call.voters else
+                f"agreed by {agreement:.0%} of {len(tied)} equally good reference(s)"
+            )
         else:
-            name = hit["scientific_name"]
             accession = hit["accession"]
-            lineage = {}
             taxid = hit["taxid"]
+            support = f"the best-scoring of {len(tied)} equally good reference(s)"
 
         if not name:
             name = f"Unnamed sequence {accession or hit['subject']}"
@@ -1126,8 +1263,7 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
         audit_rows.append([
             entry["sample"], entry["locus"], entry["zotu"], "Kept",
             f"{name} at {hit['identity']:.2f}% identity over {hit['coverage']:.0f}% "
-            f"of the sequence ({rank}), agreed by {agreement:.0%} of "
-            f"{len(tied)} equally good reference(s), {entry['size']} reads",
+            f"of the sequence ({rank}), {support}, {entry['size']} reads",
         ])
         if len(tied) >= config.blast_max_target_seqs:
             # The tie filled every slot requested, so it is probably larger
