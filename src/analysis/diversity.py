@@ -33,11 +33,13 @@ from __future__ import annotations
 
 import csv
 import math
+import statistics
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from src.analysis import readiness
 from src.pipeline import layout
 from src.pipeline.stage4_blast import RANK_ORDER, UNIDENTIFIED_RANK
 from src.reference import contaminants
@@ -52,7 +54,7 @@ SUMMARY_COLUMNS = [
     "Richness", "Species_Level_Taxa",
     "Shannon_Entropy", "Shannon_Diversity", "Simpson_Diversity",
     "Counted_Reads", "Unidentified_ZOTUs", "Unidentified_Reads",
-    "Contaminant_Reads", "Folded_Reads", "Coarser_Reads",
+    "Contaminant_Reads", "Folded_Reads", "Coarser_Reads", "Caution",
 ]
 BETA_COLUMNS = [
     "Locus", "Marker", "Sample_A", "Sample_B", "Shared", "Only_A", "Only_B",
@@ -86,9 +88,35 @@ def _name_at(row: Dict[str, str], rank: str) -> str:
 
 
 def read_table(run_dir: Path) -> List[Dict[str, str]]:
-    path = layout.identification_dir(run_dir) / layout.FINAL_SPECIES_TABLE
-    with open(path, encoding="utf-8-sig", newline="") as handle:
+    """
+    The species table - from the taxonomy stage's copy when there is one.
+    That copy holds the same rows with the lineage filled in, which a run
+    searched against a raw NCBI database otherwise lacks; without it a
+    family-level call cannot be checked for a species inside it (0034).
+    """
+    folder = layout.identification_dir(run_dir)
+    taxonomy = folder / layout.FINAL_TAXONOMY_TABLE
+    if taxonomy.exists():
+        with open(taxonomy, encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        if rows and {"Sample", "Locus", "Rank", "Reads", "Scientific_Name"} <= set(rows[0]):
+            return rows
+    with open(folder / layout.FINAL_SPECIES_TABLE, encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def depths(run_dir: Path) -> Dict[Tuple[str, str], int]:
+    """Each sample's reads per locus, from the dereplication report; empty without it."""
+    found: Dict[Tuple[str, str], int] = {}
+    report = layout.report_csv(run_dir, "dereplication")
+    if report.exists():
+        with open(report, encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                try:
+                    found[(row["Locus"], row["Sample"])] = int(row.get("Total_Reads") or 0)
+                except (KeyError, ValueError):
+                    continue
+    return found
 
 
 def sequenced_samples(run_dir: Path, table: List[Dict[str, str]]) -> Dict[str, set]:
@@ -102,15 +130,9 @@ def sequenced_samples(run_dir: Path, table: List[Dict[str, str]]) -> Dict[str, s
     found: Dict[str, set] = defaultdict(set)
     for row in table:
         found[row["Locus"]].add(row["Sample"])
-    report = layout.report_csv(run_dir, "dereplication")
-    if report.exists():
-        with open(report, encoding="utf-8-sig", newline="") as handle:
-            for row in csv.DictReader(handle):
-                try:
-                    if int(row.get("Total_Reads") or 0) > 0:
-                        found[row["Locus"]].add(row["Sample"])
-                except (KeyError, ValueError):
-                    continue
+    for (locus, sample), reads in depths(run_dir).items():
+        if reads > 0:
+            found[locus].add(sample)
     return found
 
 
@@ -118,7 +140,7 @@ def _calls(rows: List[Dict[str, str]], basis: str, keep_contaminants: bool):
     """
     One sample's rows (one locus) as calls, before folding: ({taxon: reads},
     {taxon: its name at every rank}, {reason: reads set aside}, unidentified
-    ZOTUs). Kept apart from `_fold` so that replicates can be pooled first
+    ZOTUs). Kept apart from `folded_away` so that replicates can be pooled first
     and folded together.
     """
     aside = {"Unidentified_Reads": 0, "Contaminant_Reads": 0,
@@ -214,8 +236,24 @@ def dissimilarity(a: set, b: set) -> Dict[str, object]:
             "Jaccard": jaccard, "Turnover": turnover, "Nestedness": nestedness}
 
 
+def _cautions(locus: str, sample: str, counted: Dict[Taxon, int], depth: Dict[Tuple[str, str], int],
+              median: Dict[str, float]) -> List[readiness.Finding]:
+    """What decision 0034's conditions say about one sample."""
+    cautions = []
+    reads = sum(counted.values())
+    if not counted:
+        cautions.append(readiness.found("nothing-counted", locus, sample))
+    elif reads < readiness.FEW_READS:
+        cautions.append(readiness.found("few-reads", locus, sample, reads=reads))
+    sequenced = depth.get((locus, sample))
+    if sequenced is not None and median.get(locus) and sequenced < readiness.SHALLOW_FRACTION * median[locus]:
+        cautions.append(readiness.found("low-depth", locus, sample, reads=f"{sequenced:,}",
+                                        median=f"{int(median[locus]):,}"))
+    return cautions
+
+
 def describe(run_dir: Path, basis: str = MIXED, keep_contaminants: bool = False) -> Dict[str, list]:
-    """Every table step 1 writes, as rows, without writing anything."""
+    """Every table step 1 writes, as rows, and every finding, without writing anything."""
     if basis != MIXED and basis not in FIXED_RANKS:
         raise ValueError(f"rank must be {MIXED} or one of {', '.join(FIXED_RANKS)}")
     by_sample: Dict[Tuple[str, str], List[Dict[str, str]]] = defaultdict(list)
@@ -229,11 +267,21 @@ def describe(run_dir: Path, basis: str = MIXED, keep_contaminants: bool = False)
         for sample in samples:
             by_sample.setdefault((locus, sample), [])
 
+    findings = readiness.run_findings(run_dir, table)
+    depth = depths(run_dir)
+    median = {}
+    for locus in markers:
+        values = [depth[(locus, s)] for (l, s) in by_sample if l == locus and (locus, s) in depth]
+        if values:
+            median[locus] = statistics.median(values)
+
     summary, taxa_of, reads_of = [], {}, {}
     for (locus, sample), rows in sorted(by_sample.items()):
         counted, aside, unidentified = _counted(rows, basis, keep_contaminants)
         taxa_of[(locus, sample)] = set(counted)
         reads_of[(locus, sample)] = counted
+        cautions = _cautions(locus, sample, counted, depth, median)
+        findings += cautions
         summary.append({
             "Locus": locus, "Marker": markers[locus], "Sample": sample,
             "Reads": sum(int(float(r.get("Reads") or 0)) for r in rows),
@@ -243,11 +291,14 @@ def describe(run_dir: Path, basis: str = MIXED, keep_contaminants: bool = False)
             **hill_numbers(counted.values()),
             "Counted_Reads": sum(counted.values()),
             "Unidentified_ZOTUs": unidentified, **aside,
+            "Caution": "; ".join(f.code for f in cautions),
         })
 
     beta, presence, reads = [], [], []
     for locus in sorted(markers):
         samples = sorted(s for (l, s) in by_sample if l == locus)
+        if len(samples) < 2:
+            findings.append(readiness.found("one-unit", locus, units="samples", count=len(samples)))
         for first, second in combinations(samples, 2):
             beta.append({"Locus": locus, "Marker": markers[locus], "Sample_A": first, "Sample_B": second,
                          **dissimilarity(taxa_of[(locus, first)], taxa_of[(locus, second)])})
@@ -258,7 +309,7 @@ def describe(run_dir: Path, basis: str = MIXED, keep_contaminants: bool = False)
             counts = {s: reads_of[(locus, s)].get((rank, name), 0) for s in samples}
             reads.append({**key, **counts})
             presence.append({**key, **{s: int(c > 0) for s, c in counts.items()}})
-    return {"summary": summary, "beta": beta, "presence": presence, "reads": reads}
+    return {"summary": summary, "beta": beta, "presence": presence, "reads": reads, "findings": findings}
 
 
 def _format(value) -> str:
@@ -295,11 +346,13 @@ Beta diversity (beta*.csv): presence only. Sorensen = (b+c)/(2a+b+c),
   Jaccard = (b+c)/(a+b+c), Turnover = min(b,c)/(a+min(b,c)) and
   Nestedness = Sorensen - Turnover (Baselga 2010); a = Shared, b = Only_A,
   c = Only_B. Blank where the denominator is zero.
+Presence (presence*.csv): 1 = detected, 0 = not detected - which is not the
+  same as absent: eDNA can miss a species that is there (Ficetola et al. 2016).
 Not estimated: unseen species. Every taxon carries at least the run's
   minimum ZOTU size in reads, so read-based estimators (Chao1, coverage) would
   report every sample complete.
-Decision record: TaxaTag docs/decisions/0032.
-"""
+Decision records: TaxaTag docs/decisions/0032 and 0034.
+{cautions}"""
 
 MIXED_TEXT = (
     "A call counts once, at the finest rank it was named. A call above species\n"
@@ -314,8 +367,11 @@ FIXED_TEXT = (
 
 
 def write_diversity(run_dir: Path, basis: str = MIXED, keep_contaminants: bool = False,
-                    out_dir: Optional[Path] = None) -> Dict[str, Path]:
-    """Write step 1's tables into the run's `06_analysis/` (or `out_dir`)."""
+                    out_dir: Optional[Path] = None) -> Dict[str, object]:
+    """
+    Write step 1's tables into the run's `06_analysis/` (or `out_dir`).
+    Returns the paths written, the tables, and the findings.
+    """
     tables = describe(run_dir, basis, keep_contaminants)
     folder = Path(out_dir) if out_dir else layout.analysis_dir(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
@@ -334,6 +390,7 @@ def write_diversity(run_dir: Path, basis: str = MIXED, keep_contaminants: bool =
         contaminant_text=("kept, as asked (--keep-contaminants)." if keep_contaminants else
                           "set aside, and their reads counted in Contaminant_Reads\n  (" +
                           ", ".join(sorted(contaminants.CONTAMINANT_GENERA)) + ")."),
+        cautions=readiness.notes_section(tables["findings"]),
     ), encoding="utf-8", newline="\n")
     written["notes"] = notes
-    return written
+    return {"written": written, "tables": tables, "findings": tables["findings"]}

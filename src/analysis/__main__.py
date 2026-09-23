@@ -7,6 +7,7 @@ be described there too.
     python -m src.analysis adjudication <run folder> [--species-list <csv>] [--library <folder>]
     python -m src.analysis metrics <run folder> [--sheet <filled csv>] [--out <folder>]
     python -m src.analysis coverage --library <folder> --species-list <csv> [--out <csv>] [--markers 12S 16S]
+    python -m src.analysis check <run folder> [--sample-sheet <csv> ...] [--rank ...] [--keep-contaminants]
     python -m src.analysis diversity <run folder> [--rank species|genus|family] [--keep-contaminants] [--out <folder>]
                                       [--sample-sheet <csv> [--sample-column Run] [--site-column Site]]
 
@@ -15,7 +16,8 @@ read from the run's own `config_used.yaml` unless given, so the candidates
 are named by the library that named the call. `metrics` needs no library:
 it reads the filled sheet - the run's own, or a copy filled elsewhere -
 and the candidates file if it is there. `diversity` needs no library either:
-it reads the species table alone.
+it reads the species table alone. `check` writes nothing: it says what each
+analysis would be - available, warned or blocked, and why (decision 0034).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from src.analysis import candidates as candidates_module
 from src.analysis import coverage as coverage_module
 from src.analysis import diversity as diversity_module
 from src.analysis import metrics as metrics_module
+from src.analysis import readiness as readiness_module
 from src.analysis import sites as sites_module
 from src.pipeline import layout
 from src.reference.library import ReferenceLibrary
@@ -46,6 +49,42 @@ def _library_for(run_dir: Path, given: Path | None) -> ReferenceLibrary | None:
         if folder:
             return ReferenceLibrary(Path(folder))
     return None
+
+
+def _run_options(sub) -> None:
+    """The options `diversity` and `check` share, so the check checks what would run."""
+    sub.add_argument("run_dir", type=Path, help="a finished run folder (runs/<date>)")
+    sub.add_argument("--rank", choices=diversity_module.FIXED_RANKS, help="count every call at this one rank (default: each call at its finest rank, nested calls folded)")
+    sub.add_argument("--keep-contaminants", action="store_true", help="count the likely contaminants (human, livestock, pets) instead of setting them aside")
+    sub.add_argument("--sample-sheet", type=Path, help="a CSV naming each sample's site; pools replicates into sites")
+    sub.add_argument("--sample-column", default="Sample", help="the sheet column holding the run's sample names (default: Sample)")
+    sub.add_argument("--site-column", default="Site", help="the sheet column naming each sample's site (default: Site)")
+
+
+def _print_findings(findings) -> None:
+    """Blocked first, then warnings; each kind once, with how many more like it."""
+    groups: dict = {}
+    for finding in findings:
+        groups.setdefault((finding.tier != readiness_module.BLOCKED, finding.code), []).append(finding)
+    for (_, _), group in sorted(groups.items()):
+        mark = "[blocked]" if group[0].tier == readiness_module.BLOCKED else "[!]"
+        more = f" (and {len(group) - 1} more like it)" if len(group) > 1 else ""
+        print(f"  {mark} {group[0].text}{more}")
+
+
+#: What `check` reports on, in the order a user meets them.
+_ANALYSES = [("describe the samples", readiness_module.SAMPLE), ("richness", readiness_module.RICHNESS),
+             ("Shannon and Simpson", readiness_module.DIVERSITY), ("beta diversity", readiness_module.BETA)]
+_SITE_ANALYSES = [("sites", readiness_module.SITES), ("replicate consistency", readiness_module.CONSISTENCY),
+                  ("comparing sites", readiness_module.SITE_BETA), ("occurrence", readiness_module.OCCURRENCE)]
+
+
+def _state_word(where: dict) -> str:
+    if where["blocked"]:
+        return "blocked"
+    bits = ([f"blocked for {len(where['blocked_for'])}"] if where["blocked_for"] else []) + \
+           ([f"{len(where['warnings'])} warning(s)"] if where["warnings"] else [])
+    return "ok" + (f" ({', '.join(bits)})" if bits else "")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,13 +108,10 @@ def main(argv: list[str] | None = None) -> int:
     cov.add_argument("--out", type=Path, help="write the table here (default: coverage.csv beside the list)")
     cov.add_argument("--markers", nargs="+", help="markers to report (default: every marker the library holds)")
     div = commands.add_parser("diversity", help="richness, Shannon and Simpson diversity, and beta diversity, per sample and marker")
-    div.add_argument("run_dir", type=Path, help="a finished run folder (runs/<date>)")
-    div.add_argument("--rank", choices=diversity_module.FIXED_RANKS, help="count every call at this one rank (default: each call at its finest rank, nested calls folded)")
-    div.add_argument("--keep-contaminants", action="store_true", help="count the likely contaminants (human, livestock, pets) instead of setting them aside")
+    _run_options(div)
     div.add_argument("--out", type=Path, help="write the tables here instead of into the run's 06_analysis/")
-    div.add_argument("--sample-sheet", type=Path, help="a CSV naming each sample's site; pools replicates into sites")
-    div.add_argument("--sample-column", default="Sample", help="the sheet column holding the run's sample names (default: Sample)")
-    div.add_argument("--site-column", default="Site", help="the sheet column naming each sample's site (default: Site)")
+    chk = commands.add_parser("check", help="what each analysis would be on this run - available, warned or blocked - writing nothing")
+    _run_options(chk)
     args = parser.parse_args(argv)
 
     if args.command == "coverage":
@@ -97,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"not a finished run: {run_dir}", file=sys.stderr)
         return 2
 
-    if args.command == "diversity":
+    if args.command in ("diversity", "check"):
         basis = args.rank or diversity_module.MIXED
         sheet = None
         if args.sample_sheet:
@@ -107,22 +143,41 @@ def main(argv: list[str] | None = None) -> int:
             except sites_module.SheetError as error:
                 print(error, file=sys.stderr)
                 return 2
-        written = diversity_module.write_diversity(run_dir, basis, args.keep_contaminants, args.out)
-        for path in written.values():
+
+        if args.command == "check":
+            findings = readiness_module.check(run_dir, sheet, basis, args.keep_contaminants)
+            loci = sorted(diversity_module.sequenced_samples(run_dir, diversity_module.read_table(run_dir)))
+            print(f"Checked {run_dir}")
+            for locus in loci:
+                shown = _ANALYSES + (_SITE_ANALYSES if sheet is not None else [])
+                print(f"  {locus}: " + "; ".join(
+                    f"{label} {_state_word(readiness_module.state(findings, affects, locus))}" for label, affects in shown))
+            if sheet is None:
+                print("  Sites: add --sample-sheet to pool replicates into sites.")
+            _print_findings(findings)
+            if not findings:
+                print("  Nothing is warned or blocked.")
+            return 0
+
+        result = diversity_module.write_diversity(run_dir, basis, args.keep_contaminants, args.out)
+        for path in result["written"].values():
             print(f"Wrote {path}")
-        for row in diversity_module.describe(run_dir, basis, args.keep_contaminants)["summary"]:
+        for row in result["tables"]["summary"]:
             print(f"  {row['Locus']:14s} {row['Sample']:14s} richness {row['Richness']:>3}  "
                   f"Shannon {diversity_module._format(row['Shannon_Diversity']) or '-':>7}  "
                   f"Simpson {diversity_module._format(row['Simpson_Diversity']) or '-':>7}")
+        findings = list(result["findings"])
         if sheet is not None:
-            result = sites_module.write_sites(run_dir, sheet, basis, args.keep_contaminants, args.out)
-            for path in result["written"].values():
+            site_result = sites_module.write_sites(run_dir, sheet, basis, args.keep_contaminants, args.out)
+            for path in site_result["written"].values():
                 print(f"Wrote {path}")
-            for heading, samples in result["tables"]["disagreements"].items():
+            for heading, samples in site_result["tables"]["disagreements"].items():
                 if samples:
                     print(f"  samples {heading}: {len(samples)}")
-            for locus in result["unequal"]:
-                print(f"  {locus}: sites pooled different numbers of replicates - compare with care (see the notes)")
+            findings += site_result["findings"]
+        _print_findings(findings)
+        if findings:
+            print(f"  Every caution, with its basis, is in {result['written']['notes'].name}.")
         return 0
 
     if args.command == "metrics":

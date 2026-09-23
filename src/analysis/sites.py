@@ -1,14 +1,15 @@
 # src/analysis/sites.py
 """
 Samples pooled into sites through a sample sheet: step 2 of the Analysis
-tab's tier 1 (`docs/planned.md` item 4), decided in `docs/decisions/0033`.
+tab's tier 1 (`docs/planned.md` item 4), decided in `docs/decisions/0033`,
+with its cautions under decision 0034.
 
 The sheet is the user's. TaxaTag reads a CSV with a column naming each
 sample - `Sample` unless told otherwise - and a `Site` column, and takes
 both literally: it does not guess that `12.3` is site 12, replicate 3.
 An optional `Control` column marks negative controls, which are never
 pooled. Every sample the sheet and the run do not agree on is listed,
-both ways.
+both ways, and a sample the sheet puts in two places is refused.
 
 At a site, following section 22 of `docs/science/what-the-literature-says.md`:
 
@@ -35,7 +36,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from src.analysis import diversity
+from src.analysis import diversity, readiness
 from src.pipeline import layout
 
 TRUE_WORDS = {"yes", "y", "true", "1", "x", "control"}
@@ -45,7 +46,7 @@ SITE_COLUMNS = [
     "Shannon_Entropy", "Shannon_Diversity", "Simpson_Diversity",
     "Taxa_In_Every_Replicate", "Share_In_Every_Replicate", "Mean_Replicate_Jaccard",
     "Reads", "Counted_Reads", "Unidentified_Reads", "Contaminant_Reads",
-    "Folded_Reads", "Coarser_Reads",
+    "Folded_Reads", "Coarser_Reads", "Caution",
 ]
 OCCURRENCE_COLUMNS = [
     "Locus", "Marker", "Site", "Rank", "Taxon", "Detections", "Replicates",
@@ -55,6 +56,9 @@ SITE_BETA_COLUMNS = [
     "Locus", "Marker", "Site_A", "Site_B", "Replicates_A", "Replicates_B",
     "Shared", "Only_A", "Only_B", "Sorensen", "Jaccard", "Turnover", "Nestedness",
 ]
+
+#: How a control is named when a sample's places are compared.
+A_CONTROL = "a control"
 
 
 class SheetError(ValueError):
@@ -79,19 +83,34 @@ class SampleSheet:
         columns = list(rows[0]) if rows else []
         for needed in (sample_column, site_column):
             if needed not in columns:
-                raise SheetError(f"{path.name} has no '{needed}' column; its columns are: {', '.join(columns)}")
+                raise SheetError(f"{Path(path).name} has no '{needed}' column; its columns are: {', '.join(columns)}")
         control_column = next((c for c in columns if c.strip().lower() == "control"), None)
-        sheet = cls(path=Path(path), sample_column=sample_column, rows=rows)
+
+        # Every place each sample is given, before any is believed: a sample
+        # listed twice with two sites used to take whichever row came last.
+        places: Dict[str, Set[str]] = defaultdict(set)
         for row in rows:
             sample = (row.get(sample_column) or "").strip()
             if not sample:
                 continue
             if control_column and (row.get(control_column) or "").strip().lower() in TRUE_WORDS:
+                places[sample].add(A_CONTROL)
+            else:
+                places[sample].add((row.get(site_column) or "").strip())
+        conflicts = sorted((sample, found) for sample, found in places.items() if len(found) > 1)
+        if conflicts:
+            texts = [readiness.found("sheet-conflict", subject=sample, places=", ".join(sorted(
+                        p if p == A_CONTROL else (f"site {p}" if p else "no site") for p in found))).text
+                     for sample, found in conflicts[:5]]
+            more = f" And {len(conflicts) - 5} more sample(s) like it." if len(conflicts) > 5 else ""
+            raise SheetError(" ".join(texts) + more)
+
+        sheet = cls(path=Path(path), sample_column=sample_column, rows=rows)
+        for sample, (place,) in ((s, tuple(p)) for s, p in places.items()):
+            if place == A_CONTROL:
                 sheet.controls.add(sample)
-                continue
-            site = (row.get(site_column) or "").strip()
-            if site:
-                sheet.site_of[sample] = site
+            elif place:
+                sheet.site_of[sample] = place
             else:
                 sheet.without_site.add(sample)
         return sheet
@@ -149,9 +168,29 @@ def _jaccard_similarity(a: set, b: set) -> Optional[float]:
     return len(a & b) / len(union) if union else None
 
 
+def _replicate_counts(counts: Dict[str, int], most: int = 6) -> str:
+    """
+    "A: 3, B: 2" for a small survey; for a larger one, how many sites
+    pooled each number - a sentence naming 29 sites is not read.
+    """
+    if len(counts) <= most:
+        return ", ".join(f"{site}: {n}" for site, n in counts.items())
+    tally: Dict[int, int] = defaultdict(int)
+    for n in counts.values():
+        tally[n] += 1
+    ordered = sorted(tally.items(), key=lambda item: (-item[1], item[0]))
+    first, rest = ordered[0], ordered[1:]
+    return ", ".join([f"{first[1]} sites with {first[0]}"] + [f"{sites} with {n}" for n, sites in rest])
+
+
+def _names(taxa: List[str], most: int = 8) -> str:
+    shown = ", ".join(taxa[:most])
+    return shown + (f" and {len(taxa) - most} more" if len(taxa) > most else "")
+
+
 def pool(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
          keep_contaminants: bool = False) -> Dict[str, object]:
-    """Every step 2 table, as rows, without writing anything."""
+    """Every step 2 table, as rows, and every finding, without writing anything."""
     table = diversity.read_table(run_dir)
     sequenced = diversity.sequenced_samples(run_dir, table)
     rows_of: Dict[tuple, List[Dict[str, str]]] = defaultdict(list)
@@ -161,6 +200,7 @@ def pool(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
         markers[row["Locus"]] = row.get("Marker", "")
     disagreements = check(sheet, set().union(*sequenced.values()) if sequenced else set())
 
+    findings: List[readiness.Finding] = []
     sites, occurrence, beta, presence, reads_matrix = [], [], [], [], []
     for locus in sorted(sequenced):
         marker = markers.get(locus, "")
@@ -168,9 +208,16 @@ def pool(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
         for sample in sorted(sequenced[locus]):
             if sample in sheet.site_of:
                 replicates_of[sheet.site_of[sample]].append(sample)
+        names = sorted(replicates_of, key=_natural)
+
+        counts = {site: len(replicates_of[site]) for site in names}
+        if len(set(counts.values())) > 1:
+            findings.append(readiness.found("unequal-replicates", locus, counts=_replicate_counts(counts)))
+        if len(names) < 2:
+            findings.append(readiness.found("one-unit", locus, units="sites", count=len(names)))
 
         taxa_of, summed_of = {}, {}
-        for site in sorted(replicates_of, key=_natural):
+        for site in names:
             samples = replicates_of[site]
             calls_by_replicate, lineage = [], {}
             aside = {"Unidentified_Reads": 0, "Contaminant_Reads": 0, "Folded_Reads": 0, "Coarser_Reads": 0}
@@ -191,10 +238,27 @@ def pool(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
             counted = {t: r for t, r in pooled.items() if t not in folded}
             taxa_of[site], summed_of[site] = set(counted), counted
 
+            cautions = []
+            label = f"site {site}"
+            if not counted:
+                cautions.append(readiness.found("nothing-counted", locus, label))
+            elif sum(counted.values()) < readiness.FEW_READS:
+                cautions.append(readiness.found("few-reads", locus, label, reads=sum(counted.values())))
+
             detected_in = [set(calls) & set(counted) for calls in calls_by_replicate]
             detections = {t: sum(t in found for found in detected_in) for t in counted}
-            every = sum(1 for t in counted if detections[t] == len(samples))
-            pairs = [s for s in (_jaccard_similarity(a, b) for a, b in combinations(detected_in, 2)) if s is not None]
+            if len(samples) < 2:
+                # One replicate agrees with itself by arithmetic; that is not consistency.
+                cautions.append(readiness.found("one-replicate", locus, site))
+                every, share, mean_jaccard = None, None, None
+            else:
+                every = sum(1 for t in counted if detections[t] == len(samples))
+                share = every / len(counted) if counted else None
+                pairs = [s for s in (_jaccard_similarity(a, b) for a, b in combinations(detected_in, 2))
+                         if s is not None]
+                mean_jaccard = sum(pairs) / len(pairs) if pairs else None
+            findings += cautions
+
             shares = _mean_shares(calls_by_replicate, set(counted))
             sites.append({
                 "Locus": locus, "Marker": marker, "Site": site, "Replicates": len(samples),
@@ -202,10 +266,11 @@ def pool(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
                 "Species_Level_Taxa": sum(1 for rank, _ in counted if rank == "Species"),
                 **diversity.hill_numbers(shares.values()),
                 "Taxa_In_Every_Replicate": every,
-                "Share_In_Every_Replicate": every / len(counted) if counted else None,
-                "Mean_Replicate_Jaccard": sum(pairs) / len(pairs) if pairs else None,
+                "Share_In_Every_Replicate": share,
+                "Mean_Replicate_Jaccard": mean_jaccard,
                 "Reads": sum(int(float(r.get("Reads") or 0)) for s in samples for r in rows_of.get((locus, s), [])),
                 "Counted_Reads": sum(counted.values()), **aside,
+                "Caution": "; ".join(f.code for f in cautions),
             })
             for rank, name in sorted(counted, key=lambda t: (-diversity._rank_index(t[0]), t[1])):
                 occurrence.append({
@@ -215,7 +280,18 @@ def pool(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
                     "Reads": counted[(rank, name)],
                 })
 
-        for first, second in combinations(sorted(replicates_of, key=_natural), 2):
+        # Controls are how a contaminant is recognised (Ficetola et al. 2016):
+        # a taxon a control also holds is named, never removed.
+        in_controls: Set[diversity.Taxon] = set()
+        for control in sorted(sheet.controls & sequenced[locus]):
+            counted, _, _ = diversity._counted(rows_of.get((locus, control), []), basis, keep_contaminants)
+            in_controls |= set(counted)
+        at_sites = set().union(*taxa_of.values()) if taxa_of else set()
+        shared = sorted(name for _, name in in_controls & at_sites)
+        if shared:
+            findings.append(readiness.found("control-taxa", locus, taxa=_names(shared)))
+
+        for first, second in combinations(names, 2):
             beta.append({"Locus": locus, "Marker": marker, "Site_A": first, "Site_B": second,
                          "Replicates_A": len(replicates_of[first]), "Replicates_B": len(replicates_of[second]),
                          **diversity.dissimilarity(taxa_of[first], taxa_of[second])})
@@ -223,12 +299,12 @@ def pool(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
                              key=lambda t: (-diversity._rank_index(t[0]), t[1]))
         for rank, name in every_taxon:
             key = {"Locus": locus, "Marker": marker, "Rank": rank, "Taxon": name}
-            counts = {site: summed_of[site].get((rank, name), 0) for site in replicates_of}
-            reads_matrix.append({**key, **counts})
-            presence.append({**key, **{site: int(c > 0) for site, c in counts.items()}})
+            site_counts = {site: summed_of[site].get((rank, name), 0) for site in names}
+            reads_matrix.append({**key, **site_counts})
+            presence.append({**key, **{site: int(c > 0) for site, c in site_counts.items()}})
 
     return {"sites": sites, "occurrence": occurrence, "beta": beta, "presence": presence,
-            "reads": reads_matrix, "disagreements": disagreements}
+            "reads": reads_matrix, "disagreements": disagreements, "findings": findings}
 
 
 NOTES = """
@@ -244,15 +320,17 @@ Reads: site-reads.csv sums each taxon's reads over the replicates. Shannon and
   does not decide a replicate's weight.
 Replicates: every site row says how many samples it pooled. Pooled richness
   grows with replicates; sites with different numbers are not comparable as they
-  stand.{unequal}
+  stand.
 Consistency: Share_In_Every_Replicate is the share of a site's taxa found in
   every replicate; Mean_Replicate_Jaccard the mean Jaccard similarity between
-  its replicates' taxa. Blank for a site with one replicate.
+  its replicates' taxa. A site with one replicate has neither: it would agree
+  with itself.
 Not recovered by pooling: each sample was denoised on its own, discarding
   sequences seen fewer than the run's minimum ZOTU size, so a taxon below it in
   every replicate is absent from all of them before pooling.
-Negative controls: never pooled. Their reads are not subtracted from anything.
-{disagreements}"""
+Negative controls: never pooled. Their reads are not subtracted from anything;
+  a taxon also found in a control is named in the cautions below.
+{disagreements}Sites - {cautions}"""
 
 
 def write_sites(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
@@ -270,8 +348,6 @@ def write_sites(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
         "presence": diversity._write(folder / f"site-presence{suffix}.csv", diversity.MATRIX_KEY + names, tables["presence"]),
         "reads": diversity._write(folder / f"site-reads{suffix}.csv", diversity.MATRIX_KEY + names, tables["reads"]),
     }
-    counts = {(row["Locus"], row["Replicates"]) for row in tables["sites"]}
-    unequal = sorted({locus for locus, _ in counts if len({n for l, n in counts if l == locus}) > 1})
     lines = []
     for heading, samples in tables["disagreements"].items():
         if samples:
@@ -281,10 +357,10 @@ def write_sites(run_dir: Path, sheet: SampleSheet, basis: str = diversity.MIXED,
     with open(notes, "a", encoding="utf-8", newline="\n") as handle:
         handle.write(NOTES.format(
             sheet=sheet.path.name, column=sheet.sample_column,
-            unequal=(f"\n  Replicate numbers differ between sites on: {', '.join(unequal)}." if unequal else ""),
             disagreements="\n".join(lines) + ("\n" if lines else ""),
+            cautions=readiness.notes_section(tables["findings"]),
         ))
-    return {"written": written, "tables": tables, "unequal": unequal}
+    return {"written": written, "tables": tables, "findings": tables["findings"]}
 
 
 def _natural(name: str):

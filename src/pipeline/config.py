@@ -334,7 +334,14 @@ class PipelineConfig:
         """
         if self.run_dir is None:
             return None
+        from src.version import __version__
+
         manifest = {
+            # Which TaxaTag made this run, so an analysis can say what faults
+            # its names may carry (decision 0034). Between releases a run from
+            # source records the last release's number; `platform.frozen`
+            # says whether it came from source.
+            "taxatag": __version__,
             "project_name": self.project_name,
             "started": datetime.now().isoformat(timespec="seconds"),
             "run_dir": str(self.run_dir),
