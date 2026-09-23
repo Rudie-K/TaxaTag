@@ -9,6 +9,7 @@ be described there too.
     python -m src.analysis coverage --library <folder> --species-list <csv> [--out <csv>] [--markers 12S 16S]
     python -m src.analysis check <run folder> [--sample-sheet <csv> ...] [--rank ...] [--keep-contaminants]
     python -m src.analysis diversity <run folder> [--rank species|genus|family] [--keep-contaminants] [--out <folder>]
+    python -m src.analysis effort <run folder> [--sample-sheet <csv> ...] [--seed N] [--out <folder>]
                                       [--sample-sheet <csv> [--sample-column Run] [--site-column Site]]
 
 `<run folder>` is one of the dated folders under `runs/`. The library is
@@ -32,6 +33,7 @@ from src.analysis import adjudication as adjudication_module
 from src.analysis import candidates as candidates_module
 from src.analysis import coverage as coverage_module
 from src.analysis import diversity as diversity_module
+from src.analysis import effort as effort_module
 from src.analysis import metrics as metrics_module
 from src.analysis import readiness as readiness_module
 from src.analysis import sites as sites_module
@@ -74,7 +76,8 @@ def _print_findings(findings) -> None:
 
 #: What `check` reports on, in the order a user meets them.
 _ANALYSES = [("describe the samples", readiness_module.SAMPLE), ("richness", readiness_module.RICHNESS),
-             ("Shannon and Simpson", readiness_module.DIVERSITY), ("beta diversity", readiness_module.BETA)]
+             ("Shannon and Simpson", readiness_module.DIVERSITY), ("beta diversity", readiness_module.BETA),
+             ("sampling effort", readiness_module.EFFORT)]
 _SITE_ANALYSES = [("sites", readiness_module.SITES), ("replicate consistency", readiness_module.CONSISTENCY),
                   ("comparing sites", readiness_module.SITE_BETA), ("occurrence", readiness_module.OCCURRENCE)]
 
@@ -112,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     div.add_argument("--out", type=Path, help="write the tables here instead of into the run's 06_analysis/")
     chk = commands.add_parser("check", help="what each analysis would be on this run - available, warned or blocked - writing nothing")
     _run_options(chk)
+    eff = commands.add_parser("effort", help="was sampling enough: accumulation curves, Chao2 and coverage, with bootstrap intervals")
+    _run_options(eff)
+    eff.add_argument("--seed", type=int, default=effort_module.SEED, help="the bootstrap's random seed (default: %(default)s)")
+    eff.add_argument("--out", type=Path, help="write the tables here instead of into the run's 06_analysis/")
     args = parser.parse_args(argv)
 
     if args.command == "coverage":
@@ -133,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"not a finished run: {run_dir}", file=sys.stderr)
         return 2
 
-    if args.command in ("diversity", "check"):
+    if args.command in ("diversity", "check", "effort"):
         basis = args.rank or diversity_module.MIXED
         sheet = None
         if args.sample_sheet:
@@ -157,6 +164,24 @@ def main(argv: list[str] | None = None) -> int:
             _print_findings(findings)
             if not findings:
                 print("  Nothing is warned or blocked.")
+            return 0
+
+        if args.command == "effort":
+            result = effort_module.write_effort(run_dir, sheet, basis, args.keep_contaminants, args.out, args.seed)
+            for path in result["written"].values():
+                print(f"Wrote {path}")
+            for row in result["tables"]["summary"]:
+                if row["Scope"] != effort_module.SURVEY:
+                    continue
+                if row.get("Chao2") is None:
+                    print(f"  {row['Locus']:14s} {row['Units']} {row['Unit']}(s): no curve")
+                    continue
+                print(f"  {row['Locus']:14s} {row['Units']} {row['Unit']}s: {row['Observed_Richness']} taxa found; "
+                      f"Chao2 {row['Chao2']:.1f} ({row['Chao2_Lower']:.1f}-{row['Chao2_Upper']:.1f}); "
+                      f"coverage {row['Coverage']:.2f}")
+            _print_findings(result["findings"])
+            if result["findings"]:
+                print(f"  Every caution, with its basis, is in {result['written']['notes'].name}.")
             return 0
 
         result = diversity_module.write_diversity(run_dir, basis, args.keep_contaminants, args.out)

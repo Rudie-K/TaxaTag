@@ -39,11 +39,15 @@ BLOCKED, WARNING = "blocked", "warning"
 #: control. `NAMES` is every name the run gave, so every analysis.
 NAMES, RICHNESS, DIVERSITY, BETA, SAMPLE = "names", "richness", "diversity", "beta", "sample"
 SITES, CONSISTENCY, SITE_BETA, OCCURRENCE = "sites", "consistency", "site beta", "occurrence"
+EFFORT = "sampling effort"
 
 #: TaxaTag's own thresholds, where the literature gives none. Each is named
 #: as a judgement wherever it is reported.
 FEW_READS = 100
 SHALLOW_FRACTION = 0.1
+
+#: The fewest units Chao (1987) recommends for Chao2; from the literature, not ours.
+CHAO2_UNITS = 5
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,14 @@ _TABLE = (
     Condition("unequal-replicates", WARNING, SITE_BETA, "Chao et al. 2014; Baselga 2010",
               "Sites on {locus} pooled different numbers of samples ({counts}). A site with more "
               "samples finds more taxa, so compare their richness with care."),
+    Condition("too-few-units", BLOCKED, EFFORT, "a curve needs two points",
+              "An accumulation curve needs at least two units; {scope} on {locus} has {count}."),
+    Condition("chao2-few-units", WARNING, EFFORT, "Chao 1987",
+              "Chao2 for {scope} on {locus} rests on {count} units, under the five Chao (1987) "
+              "recommends; read it as a lower bound that may be well below the true number."),
+    Condition("beyond-double", WARNING, EFFORT, "Chao et al. 2014",
+              "Site {subject} on {locus} is compared at {base} units, more than twice its {count}; "
+              "its richness there is extrapolated past the range Chao et al. (2014) found reliable."),
     Condition("control-taxa", WARNING, OCCURRENCE, "Ficetola et al. 2016",
               "{taxa} turned up in a negative control as well as at a site on {locus}. They may be "
               "contamination: controls are how a contaminant is recognised."),
@@ -214,12 +226,19 @@ def check(run_dir: Path, sheet=None, basis: str = "mixed", keep_contaminants: bo
     without writing anything. What `python -m src.analysis check` prints
     and what the Analysis tab will read to grey out and mark its options.
     """
-    from src.analysis import diversity, sites  # here, not above: both import this module
+    from src.analysis import diversity, effort, sites  # here, not above: they import this module
 
     findings = list(diversity.describe(run_dir, basis, keep_contaminants)["findings"])
     if sheet is not None:
         findings += sites.pool(run_dir, sheet, basis, keep_contaminants)["findings"]
-    return findings
+    findings += effort.plan(run_dir, sheet, basis, keep_contaminants)["findings"]
+    # Each analysis repeats what the run says about its own names; list it once.
+    once, seen = [], set()
+    for finding in findings:
+        if finding not in seen:
+            seen.add(finding)
+            once.append(finding)
+    return once
 
 
 def notes_section(findings: List[Finding]) -> str:
