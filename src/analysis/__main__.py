@@ -7,12 +7,14 @@ be described there too.
     python -m src.analysis adjudication <run folder> [--species-list <csv>] [--library <folder>]
     python -m src.analysis metrics <run folder> [--sheet <filled csv>] [--out <folder>]
     python -m src.analysis coverage --library <folder> --species-list <csv> [--out <csv>] [--markers 12S 16S]
+    python -m src.analysis diversity <run folder> [--rank species|genus|family] [--keep-contaminants] [--out <folder>]
 
 `<run folder>` is one of the dated folders under `runs/`. The library is
 read from the run's own `config_used.yaml` unless given, so the candidates
 are named by the library that named the call. `metrics` needs no library:
 it reads the filled sheet - the run's own, or a copy filled elsewhere -
-and the candidates file if it is there.
+and the candidates file if it is there. `diversity` needs no library either:
+it reads the species table alone.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import yaml
 from src.analysis import adjudication as adjudication_module
 from src.analysis import candidates as candidates_module
 from src.analysis import coverage as coverage_module
+from src.analysis import diversity as diversity_module
 from src.analysis import metrics as metrics_module
 from src.pipeline import layout
 from src.reference.library import ReferenceLibrary
@@ -63,6 +66,11 @@ def main(argv: list[str] | None = None) -> int:
     cov.add_argument("--species-list", type=Path, required=True, help="a CSV of species: ScientificName, optional Synonyms")
     cov.add_argument("--out", type=Path, help="write the table here (default: coverage.csv beside the list)")
     cov.add_argument("--markers", nargs="+", help="markers to report (default: every marker the library holds)")
+    div = commands.add_parser("diversity", help="richness, Shannon and Simpson diversity, and beta diversity, per sample and marker")
+    div.add_argument("run_dir", type=Path, help="a finished run folder (runs/<date>)")
+    div.add_argument("--rank", choices=diversity_module.FIXED_RANKS, help="count every call at this one rank (default: each call at its finest rank, nested calls folded)")
+    div.add_argument("--keep-contaminants", action="store_true", help="count the likely contaminants (human, livestock, pets) instead of setting them aside")
+    div.add_argument("--out", type=Path, help="write the tables here instead of into the run's 06_analysis/")
     args = parser.parse_args(argv)
 
     if args.command == "coverage":
@@ -83,6 +91,17 @@ def main(argv: list[str] | None = None) -> int:
     if not (run_dir / "05_results" / "species_composition.csv").exists():
         print(f"not a finished run: {run_dir}", file=sys.stderr)
         return 2
+
+    if args.command == "diversity":
+        basis = args.rank or diversity_module.MIXED
+        written = diversity_module.write_diversity(run_dir, basis, args.keep_contaminants, args.out)
+        for path in written.values():
+            print(f"Wrote {path}")
+        for row in diversity_module.describe(run_dir, basis, args.keep_contaminants)["summary"]:
+            print(f"  {row['Locus']:14s} {row['Sample']:14s} richness {row['Richness']:>3}  "
+                  f"Shannon {diversity_module._format(row['Shannon_Diversity']) or '-':>7}  "
+                  f"Simpson {diversity_module._format(row['Simpson_Diversity']) or '-':>7}")
+        return 0
 
     if args.command == "metrics":
         sheet = (args.sheet or layout.analysis_dir(run_dir) / "adjudication.csv").resolve()
