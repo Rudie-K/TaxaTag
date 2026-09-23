@@ -71,6 +71,10 @@ _TABLE = (
     Condition("ties-at-cap", WARNING, NAMES, "decision 0027",
               "{count} call(s) had a tie as large as the search's limit, so which references voted "
               "was the search's choice; the identification audit marks them 'Tie at cap'."),
+    Condition("not-searched", WARNING, NAMES, "decision 0037",
+              "{count} record(s) were never searched, because their submissions did not come back "
+              "from the database; the identification audit marks them 'Not searched'. Every table "
+              "from this run may miss what they would have found. Resuming the run searches them."),
     Condition("no-lineage", WARNING, RICHNESS, "decision 0032",
               "{count} call(s) above genus on {locus} could not be checked for a species inside "
               "them, because the rows around them carry no lineage above genus. Richness may count "
@@ -171,12 +175,17 @@ def _manifest(run_dir: Path) -> Optional[dict]:
         return None
 
 
-def _ties_at_cap(run_dir: Path) -> int:
+def _audit_count(run_dir: Path, decision: str) -> int:
+    """How many rows of the run's identification audit record this decision."""
     path = layout.report_csv(run_dir, "identification_audit")
     if not path.exists():
         return 0
     with open(path, encoding="utf-8-sig", newline="") as handle:
-        return sum(1 for row in csv.DictReader(handle) if (row.get("Decision") or "").strip() == "Tie at cap")
+        return sum(1 for row in csv.DictReader(handle) if (row.get("Decision") or "").strip() == decision)
+
+
+def _ties_at_cap(run_dir: Path) -> int:
+    return _audit_count(run_dir, "Tie at cap")
 
 
 def _unchecked_calls(table: List[Dict[str, str]]) -> Dict[str, int]:
@@ -215,6 +224,9 @@ def run_findings(run_dir: Path, table: List[Dict[str, str]]) -> List[Finding]:
     ties = _ties_at_cap(run_dir)
     if ties:
         findings.append(found("ties-at-cap", count=ties))
+    unsearched = _audit_count(run_dir, "Not searched")
+    if unsearched:
+        findings.append(found("not-searched", count=unsearched))
     for locus, count in sorted(_unchecked_calls(table).items()):
         findings.append(found("no-lineage", locus=locus, count=count))
     return findings

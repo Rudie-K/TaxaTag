@@ -87,13 +87,15 @@ class PipelineConfig:
     # stalls. Ignored when searching locally, where one search is fastest.
     blast_chunk_size: int = 100
 
-    # How long to wait for one of those submissions before giving up on it.
-    #
-    # This is an estimate, not a measurement: a healthy NCBI queue returns a
-    # hundred sequences in roughly twenty minutes, and fifteen per cent is
-    # added for a busy one. It is scaled by the actual chunk size. Raise it if
-    # your searches are being abandoned while NCBI is merely slow.
-    blast_timeout_minutes: float = 23.0
+    # How long one of those submissions may wait for NCBI to finish it, and
+    # again for its results to be collected, before the run moves on. Nothing
+    # is lost when it does: NCBI keep the search for about a day and Resume
+    # collects it. The same for every submission, because the wait is NCBI's
+    # load, not the batch: at 500 hits (17 September 2026) submissions of 50
+    # took 3 to 34 minutes, collecting 100 took 45, and one was still queued
+    # at 90. It was 23, scaled by batch size and sized for 10 hits (decision
+    # 0037).
+    blast_timeout_minutes: float = 120.0
 
     # The smallest share of a sequence that must take part in the alignment
     # for a match to count. Identity alone is not enough: BLAST reports a
@@ -202,7 +204,7 @@ class PipelineConfig:
             blast_mode=data.get("runtime", {}).get("blast_mode", "remote"),
             blast_chunk_size=int(data.get("runtime", {}).get("blast_chunk_size", 100)),
             blast_timeout_minutes=float(
-                data.get("runtime", {}).get("blast_timeout_minutes", 23.0)
+                data.get("runtime", {}).get("blast_timeout_minutes", 120.0)
             ),
             min_query_coverage=float(
                 data.get("thresholds", {}).get("min_query_coverage", 90.0)

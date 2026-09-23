@@ -24,6 +24,7 @@ time, and a search interrupted halfway can be collected later.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -46,10 +47,12 @@ BLAST_URL = "https://blast.ncbi.nlm.nih.gov/Blast.cgi"
 HTTP_TIMEOUT = 120
 
 #: How often to ask whether a search has finished. NCBI ask for no more than
-#: one status request per minute, and they mean it, but they also return their
-#: own estimate of how long the search will take, which is what is waited
-#: first.
-POLL_SECONDS = 20
+#: one status request per search per minute, and deprioritise callers who ask
+#: more (`docs/protocols/searching-ncbi.md`). This was 20 seconds until 23
+#: September 2026, three times their limit, through a 1.0.0 whose searches
+#: could wait for hours. Their own estimate of the search's length is what is
+#: waited first.
+POLL_SECONDS = 60
 MINIMUM_FIRST_WAIT = 5
 
 
@@ -241,7 +244,18 @@ def formatter_path(blastn_path: Path) -> Path:
 PENDING_FILE = "ncbi_searches.json"
 
 
-def remember(folder: Path, label: str, rid: str, sequence_count: int) -> None:
+def fingerprint(query_fasta: Path, *settings) -> str:
+    """
+    What a submission asked for - its sequences, and the settings that shape
+    its answer - so that a search is only ever read as the answer to that.
+    """
+    digest = hashlib.sha1(Path(query_fasta).read_bytes())
+    for setting in settings:
+        digest.update(f"|{setting}".encode("utf-8"))
+    return digest.hexdigest()
+
+
+def remember(folder: Path, label: str, rid: str, sequence_count: int, sent: str) -> None:
     """
     Write down a search NCBI has accepted, before waiting for it.
 
@@ -249,25 +263,61 @@ def remember(folder: Path, label: str, rid: str, sequence_count: int) -> None:
     the wait that produced it: if the queue outlasts our patience, or the run
     is stopped, or the machine is shut down, the search is still theirs to
     finish and can be collected later rather than submitted again. Resuming
-    the run picks these up.
+    the run picks these up. `sent` is the submission's `fingerprint`.
     """
     records = _pending(folder)
     records[label] = {
         "rid": rid,
         "submitted": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "sequences": sequence_count,
+        "fingerprint": sent,
     }
     _write_pending(folder, records)
 
 
-def recall(folder: Path, label: str) -> Optional[str]:
-    """The id of a search submitted earlier for this batch, if there is one."""
+def recall(folder: Path, label: str, sent: str) -> Optional[str]:
+    """
+    The id of a search submitted earlier for exactly these sequences, if any.
+
+    A label names a batch's place in the run, not its contents. Resumed with
+    another batch size, the Sussex Audit's 12S run collected a search of 100
+    sequences for a batch of 50 ("98 of 50 matched"). That time the batch was
+    the first half of the search; the other way round, a batch's remaining
+    sequences would never have been searched and would read as matching
+    nothing. So a search is collected only for the sequences it was sent
+    with, and a record without a fingerprint (TaxaTag 1.0.0 wrote none) is
+    searched again rather than trusted.
+    """
     record = _pending(folder).get(label)
-    return record.get("rid") if isinstance(record, dict) else None
+    if isinstance(record, dict) and record.get("fingerprint") == sent and not record.get("collected"):
+        return record.get("rid")
+    return None
+
+
+def collected(folder: Path, label: str, sent: str) -> bool:
+    """Whether this batch's results were collected by an earlier attempt, for exactly what is being sent now."""
+    record = _pending(folder).get(label)
+    return isinstance(record, dict) and record.get("fingerprint") == sent and record.get("collected") is True
+
+
+def mark_collected(folder: Path, label: str, sent: str) -> None:
+    """
+    Note that a batch's results are safely on disk.
+
+    A resumed run then fetches only what is missing. Before, it submitted
+    every batch again but the one still pending: the Sussex Audit's 12S
+    run sent eight searches back into NCBI's queue to recover one. That is
+    hours, and load on a service that slows its heaviest callers down.
+    """
+    records = _pending(folder)
+    record = records.get(label) if isinstance(records.get(label), dict) else {}
+    records[label] = {**record, "fingerprint": sent, "collected": True,
+                      "collected_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    _write_pending(folder, records)
 
 
 def forget(folder: Path, label: str) -> None:
-    """Drop a search once its results are safely collected."""
+    """Drop a search that can no longer be collected."""
     records = _pending(folder)
     if records.pop(label, None) is not None:
         _write_pending(folder, records)

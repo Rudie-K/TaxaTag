@@ -101,12 +101,13 @@ runtime:
   # searches, where one search of everything is fastest.
   blast_chunk_size: 100
 
-  # Minutes to wait for one submission before giving up on it and retrying.
-  # An estimate rather than a measurement: a healthy NCBI queue returns a
-  # hundred sequences in roughly twenty minutes, plus fifteen per cent for a
-  # busy one. Scaled by the actual chunk size. Raise it if searches are being
-  # abandoned while NCBI is merely slow rather than stuck.
-  blast_timeout_minutes: 23.0
+  # Minutes one submission may wait for NCBI to finish it, and again for its
+  # results to be collected, before the run moves on. Nothing is lost when it
+  # does: NCBI keep the search for about a day, and Resume collects it. The
+  # same for every submission, because the wait is NCBI's load, not the batch:
+  # at 500 hits, submissions of 50 took 3 to 34 minutes, collecting 100 took
+  # 45, and one was still queued at 90 (17 September 2026; decision 0037).
+  blast_timeout_minutes: 120.0
 
 # -----------------------------------------------------------------------------
 # Identifying yourself to NCBI

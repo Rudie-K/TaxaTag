@@ -574,18 +574,39 @@ def _chunks(sequences: List, size: int) -> List[List]:
     return [sequences[i : i + size] for i in range(0, len(sequences), size)]
 
 
-def _timeout_for(config: PipelineConfig, sequence_count: int) -> Optional[float]:
+def _timeout_for(config: PipelineConfig) -> Optional[float]:
     """
-    How long one submission may take before it is abandoned, in seconds.
+    How long a remote submission may wait at each of its two steps, in seconds.
 
-    Only remote searches are limited. A local search is bounded by the
-    machine it runs on and finishes in seconds; a remote one depends on a
-    queue elsewhere and may never come back at all.
+    The steps are NCBI finishing the search and collecting its results, and
+    each gets the whole setting. Only remote searches are limited: a local
+    one is bounded by the machine it runs on, while a remote one depends on
+    a queue elsewhere and may never come back at all.
+
+    The same for every submission, whatever its size, because what the wait
+    is spent on is NCBI's load, not the batch. On 17 September 2026 the
+    Sussex Audit's 50-sequence submissions at 500 hits took 3 to 6 minutes
+    one afternoon and 24 to 34 that morning. Collecting one of 100 took 45.
+    One was still queued at 90. The limit this replaced was 23 minutes per
+    100 sequences, scaled down for smaller batches, and sized for 10 hits.
     """
     if config.blast_mode != "remote" or config.blast_timeout_minutes <= 0:
         return None
-    per_sequence = (config.blast_timeout_minutes * 60.0) / max(1, config.blast_chunk_size)
-    return max(120.0, per_sequence * max(1, sequence_count))
+    return config.blast_timeout_minutes * 60.0
+
+
+def _remote_wait_note(config: PipelineConfig) -> str:
+    """
+    What the log says, before the first submission, about how long it will
+    wait - in the setting's own unit, so the number a user reads here is the
+    one they would change.
+    """
+    if _timeout_for(config) is None:
+        return ("Each submission is waited for until NCBI answers; Stop ends the wait, "
+                "and Resume collects the search later.")
+    return (f"Each submission may wait up to {config.blast_timeout_minutes:g} min for NCBI "
+            "to finish it, and as long again to collect the results. One that takes "
+            "longer is not lost: NCBI keep a search for about a day, and Resume collects it.")
 
 
 def _search_ncbi(
@@ -610,11 +631,21 @@ def _search_ncbi(
     waiting and is what made the previous version unable to succeed at all.
     """
     folder = output.parent
+    sent = ncbi_remote.fingerprint(
+        query_fasta, REMOTE_DATABASE, config.blast_max_target_seqs, config.blast_evalue
+    )
+
+    # Collected by an earlier attempt at this run, for these same sequences
+    # and settings: a resumed run fetches only what is missing.
+    if output.exists() and ncbi_remote.collected(folder, log_name, sent):
+        reporter.info("    collected earlier, so not searched again")
+        return True, ""
 
     # A search submitted by an earlier attempt at this run is still NCBI's to
     # finish, and they keep a finished one for about a day. Collecting it beats
-    # submitting the same work again behind it in the same queue.
-    waiting = ncbi_remote.recall(folder, log_name)
+    # submitting the same work again behind it in the same queue - provided it
+    # was a search of these same sequences, with the same settings.
+    waiting = ncbi_remote.recall(folder, log_name, sent)
     if waiting:
         reporter.info(f"    picking up search {waiting}, submitted earlier")
         try:
@@ -626,7 +657,7 @@ def _search_ncbi(
                 email=config.ncbi_email,
             )
             return _collect(config, waiting, output, folder, log_dir, log_name,
-                            reporter, timeout_seconds, found)
+                            reporter, timeout_seconds, found, sent)
         except ncbi_remote.RemoteSearchError as problem:
             # An expired id is worth replacing; anything else is worth
             # reporting, because the search itself is still pending.
@@ -657,7 +688,7 @@ def _search_ncbi(
 
         # Written down before the wait, not after: a search abandoned halfway
         # is exactly the one worth being able to come back to.
-        ncbi_remote.remember(folder, log_name, submission.rid, _count_sequences(query_fasta))
+        ncbi_remote.remember(folder, log_name, submission.rid, _count_sequences(query_fasta), sent)
         reporter.info(
             f"    NCBI accepted it as search {submission.rid}"
             + (
@@ -678,7 +709,7 @@ def _search_ncbi(
             return False, f"{problem} Resume will collect it."
 
         return _collect(config, submission.rid, output, folder, log_dir, log_name,
-                        reporter, timeout_seconds, found)
+                        reporter, timeout_seconds, found, sent)
 
     return False, "the search was never accepted"
 
@@ -693,30 +724,42 @@ def _collect(
     reporter: Reporter,
     timeout_seconds: Optional[float],
     found: bool,
+    sent: str,
 ) -> Tuple[bool, str]:
     """Turn a finished NCBI search into the same table a local search writes."""
     if not found:
         # Finishing with nothing found is a real answer, and an empty file is
         # how the rest of the stage expects to be told so.
         output.write_text("", encoding="utf-8")
-        ncbi_remote.forget(folder, log_name)
+        ncbi_remote.mark_collected(folder, log_name, sent)
         return True, ""
 
-    result = run_tool(
-        [
-            str(ncbi_remote.formatter_path(config.blastn_path)),
-            "-rid", rid,
-            "-outfmt", "6 " + " ".join(BLAST_FIELDS),
-            "-out", str(output),
-        ],
-        log_path=log_dir / f"{log_name}_collect.log",
-        reporter=reporter,
-        heartbeat="Collecting the results from NCBI",
-        timeout_seconds=timeout_seconds,
-    )
+    try:
+        result = run_tool(
+            [
+                str(ncbi_remote.formatter_path(config.blastn_path)),
+                "-rid", rid,
+                "-outfmt", "6 " + " ".join(BLAST_FIELDS),
+                "-out", str(output),
+            ],
+            log_path=log_dir / f"{log_name}_collect.log",
+            reporter=reporter,
+            heartbeat="Collecting the results from NCBI",
+            timeout_seconds=timeout_seconds,
+        )
+    except ToolTimeout as expired:
+        # Collecting is its own wait on NCBI, and at 500 hits a long one. Left
+        # uncaught this ended the whole run as "an unexpected problem" - the
+        # Sussex Audit's first remote run, 17 September 2026, 23 minutes into
+        # collecting a search that had already finished. The search is kept,
+        # so Resume collects it rather than searching again.
+        reporter.debug(f"    {expired}")
+        return False, (f"search {rid} finished, but its results were still being collected "
+                       f"after {config.blast_timeout_minutes:g} min. It is kept, and Resume "
+                       "will collect it.")
     if not result.ok:
         return False, f"search {rid} finished but could not be collected - {result.tail(2)}"
-    ncbi_remote.forget(folder, log_name)
+    ncbi_remote.mark_collected(folder, log_name, sent)
     return True, ""
 
 
@@ -790,6 +833,25 @@ def _search_once(
     return False, problem
 
 
+def _clear_other_batchings(output_dir: Path, label: str, names: List[str]) -> None:
+    """
+    Remove the hit and query files an earlier attempt at this run wrote for
+    the same sequences under another batch size.
+
+    Resumed with another `blast_chunk_size`, a run wrote its new batches
+    beside the old ones, and whatever reads a run's hits reads them all: the
+    candidates file took each of the old batches' references twice (found
+    with `tools/remote_standin.py`, 23 September 2026). What this batching
+    writes is kept, so a batch collected earlier is still reused.
+    """
+    keep = {f"blast_hits_{name}.tsv" for name in names} | {f"query_{name}.fasta" for name in names}
+    for pattern in (f"blast_hits_{label}.tsv", f"blast_hits_{label}_[0-9][0-9][0-9].tsv",
+                    f"query_{label}.fasta", f"query_{label}_[0-9][0-9][0-9].fasta"):
+        for path in output_dir.glob(pattern):
+            if path.name not in keep:
+                path.unlink()
+
+
 def _search(
     config: PipelineConfig,
     sequences: List,
@@ -812,6 +874,9 @@ def _search(
     hits: Dict[str, List[Dict]] = {}
     unsearched: List[str] = []
     written: List[Path] = []
+    _clear_other_batchings(output_dir, label, [
+        f"{label}_{index:03d}" if len(batches) > 1 else label for index in range(1, len(batches) + 1)
+    ])
 
     if len(batches) > 1:
         reporter.info(
@@ -833,7 +898,7 @@ def _search(
 
         ok, problem = _search_once(
             config, query, output, database, log_dir, f"blast_{name}", reporter,
-            _timeout_for(config, len(batch)),
+            _timeout_for(config),
         )
 
         if ok:
@@ -1002,6 +1067,7 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
             "this can take anything from a few minutes to several hours. The time "
             "waited is shown as it goes. A local reference library is far faster."
         )
+        reporter.info(_remote_wait_note(config))
 
     output_dir = layout.identification_dir(config.run_dir)
     log_dir = layout.logs_dir(config.run_dir, "blast")
@@ -1136,7 +1202,12 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
             "repeating the earlier stages."
         )
 
-    reporter.info(f"{len(hits)} of {len(unique_sequences)} sequences matched something.")
+    searched = len(unique_sequences) - len(set(unsearched))
+    reporter.info(
+        f"{len(hits)} of {len(unique_sequences)} sequences matched something."
+        if not unsearched else
+        f"{len(hits)} of the {searched} sequences searched matched something."
+    )
 
     # ------------------------------------------------------------------
     # Turn identifiers into biology
@@ -1172,10 +1243,22 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
             )
 
     species_rows: List[List] = []
-    rejected = {"identity": 0, "coverage": 0, "no_match": 0, "ambiguous": 0}
+    rejected = {"identity": 0, "coverage": 0, "no_match": 0, "ambiguous": 0, "unsearched": 0}
     threshold = float(config.consensus_threshold)
+    unsearched_ids = set(unsearched)
 
     for entry in kept:
+        if entry["query_id"] in unsearched_ids:
+            # Never searched is not "matched nothing". 1.0.0 wrote "Nothing in
+            # the database matched this sequence" for a sequence whose
+            # submission had simply not come back - an answer to a question
+            # nobody had asked yet (decision 0037).
+            rejected["unsearched"] += 1
+            audit_rows.append([
+                entry["sample"], entry["locus"], entry["zotu"], "Not searched",
+                "Its submission did not come back from the database; Resume will search it",
+            ])
+            continue
         call = identify_sequence(
             hits.get(entry["query_id"]) or [], lineages, thresholds, min_coverage, threshold
         )
@@ -1302,15 +1385,27 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
         library.close()
 
     if not species_rows:
+        message = (
+            "Nothing matched the database well enough to be identified. "
+            f"{rejected['no_match']} had no match, {rejected['coverage']} matched "
+            f"over too little of their length, {rejected['identity']} were below "
+            f"the identity threshold, and {rejected['ambiguous']} matched "
+            "references that disagree."
+        )
+        if rejected["unsearched"] == len(kept):
+            message = (
+                f"None of the {len(unique_sequences)} sequences was searched, because no "
+                "submission came back from the database. Use Resume to search them."
+            )
+        elif rejected["unsearched"]:
+            message = (
+                f"{rejected['unsearched']} record(s) were never searched, because their "
+                "submissions did not come back; use Resume to search them. " + message
+            )
         return {
             "status": "error",
-            "message": (
-                "Nothing matched the database well enough to be identified. "
-                f"{rejected['no_match']} had no match, {rejected['coverage']} matched "
-                f"over too little of their length, {rejected['identity']} were below "
-                f"the identity threshold, and {rejected['ambiguous']} matched "
-                "references that disagree."
-            ),
+            "message": message,
+            "unsearched": len(unsearched),
             "species_csv": species_csv,
             "audit_csv": audit_csv,
         }
@@ -1323,8 +1418,9 @@ def run_stage4(config: PipelineConfig, reporter: Optional[Reporter] = None) -> d
         reporter.info(
             f"{rejected['no_match']} with no match, {rejected['coverage']} matching too "
             f"little of their length, {rejected['identity']} below the identity "
-            f"threshold, {rejected['ambiguous']} too ambiguous to name. "
-            f"See {audit_csv.name} for the reason behind every decision."
+            f"threshold, {rejected['ambiguous']} too ambiguous to name"
+            + (f", {rejected['unsearched']} not yet searched" if rejected["unsearched"] else "")
+            + f". See {audit_csv.name} for the reason behind every decision."
         )
     if rejected.get("tie at cap"):
         reporter.warning(

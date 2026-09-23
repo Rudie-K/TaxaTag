@@ -153,8 +153,10 @@ GROUPS: List[Tuple[str, str, List[Field]]] = [
                   "Default 100.", minimum=1, maximum=5000),
             Field("runtime.blast_timeout_minutes", "Minutes to wait per submission",
                   "float",
-                  "How long to wait before moving on. Nothing is lost: the "
-                  "search stays NCBI's to finish and Resume collects it.",
+                  "How long each submission may wait for NCBI, and again to "
+                  "collect its results, before the run moves on. Nothing is "
+                  "lost: the search stays NCBI's to finish and Resume collects "
+                  "it. Default 120.",
                   minimum=0.0, maximum=600.0, decimals=1),
             Field("resources.ncbi_tool", "Name TaxaTag identifies itself by", "text"),
         ],
