@@ -191,7 +191,9 @@ hiddenimports += ["src.validation", "src.validation.selftest"]
 #: nothing in the window imports it and PyInstaller would leave it out;
 #: the Analysis tab will import it, and the build must match the source
 #: it came from before then, not after (`tools/verify_build.py`).
-hiddenimports += ["src.analysis", "src.analysis.candidates", "src.analysis.adjudication", "src.analysis.metrics", "src.analysis.__main__"]
+hiddenimports += ["src.analysis", "src.analysis.candidates", "src.analysis.adjudication", "src.analysis.metrics",
+                  "src.analysis.coverage", "src.analysis.diversity", "src.analysis.sites",
+                  "src.analysis.readiness", "src.analysis.effort", "src.analysis.__main__"]
 
 #: The same reasoning, and here the cost of being wrong is higher. The
 #: update check is reached only from inside MainWindow after the window
