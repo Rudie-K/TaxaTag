@@ -46,6 +46,34 @@ def app_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+def build_provenance() -> str:
+    """
+    Where this copy of TaxaTag came from, for the About box: the commit a
+    built copy was made from ("built from 7d5c8b9"), or that it runs from
+    source and at which commit. "" when neither can be told.
+
+    The version number says which release; this says which exact code,
+    which matters for a copy run from source between releases (item 12).
+    """
+    if getattr(sys, "frozen", False):
+        import json
+
+        stamp = Path(sys.executable).parent / "build_info.json"
+        try:
+            commit = json.loads(stamp.read_text(encoding="utf-8")).get("commit", "")
+        except (OSError, ValueError):
+            return ""
+        return f"built from {commit[:7]}" if commit else ""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"], cwd=app_root(),
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        commit = ""
+    return f"from source, {commit}" if commit else "from source"
+
+
 @lru_cache(maxsize=None)
 def get_bundled_bin(tool_name: str) -> Path:
     """

@@ -48,6 +48,7 @@ from src.pipeline import resume as resume_module
 from src.pipeline.config import PipelineConfig
 from src.utils import platform as platform_utils
 from src.utils import paths
+from src.version import __version__
 
 APP_NAME = "TaxaTag"
 APP_TAGLINE = "Environmental DNA to species, without the command line"
@@ -160,7 +161,19 @@ class MainWindow(QMainWindow):
         words.setSpacing(2)
         title = QLabel(APP_NAME)
         title.setObjectName("titleLabel")
-        words.addWidget(title)
+        # The version beside the name, as text: the emblem is never altered
+        # to carry it. Quiet, in the help text's colour, which is measured
+        # against every scheme's ground. A screenshot in a methods section
+        # or a problem report can then say which program made it (item 12).
+        self.version_label = QLabel(f"version {__version__}")
+        self.version_label.setObjectName("helpLabel")
+        self.version_label.setAccessibleName(f"{APP_NAME} version {__version__}")
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+        name_row.addWidget(title, 0, Qt.AlignmentFlag.AlignBottom)
+        name_row.addWidget(self.version_label, 0, Qt.AlignmentFlag.AlignBottom)
+        name_row.addStretch(1)
+        words.addLayout(name_row)
         words.addWidget(HelpLabel(APP_TAGLINE))
         words.addStretch(1)
         header_row.addLayout(words, 1)
@@ -1360,10 +1373,14 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Log not saved", str(error))
 
     def show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            f"About {APP_NAME}",
+        QMessageBox.about(self, f"About {APP_NAME}", self.about_text())
+
+    def about_text(self) -> str:
+        """Help > About, as rich text. A method so that it can be read without opening a dialog."""
+        provenance = platform_utils.build_provenance()
+        return (
             f"<h3>{APP_NAME}</h3>"
+            f"<p>Version {__version__}" + (f" ({provenance})" if provenance else "") + "</p>"
             f"<p>{APP_TAGLINE}</p>"
             "<p>Turns environmental DNA sequencing files into a table of the species "
             "present in each sample, on Windows, macOS and Linux.</p>"
@@ -1386,7 +1403,7 @@ class MainWindow(QMainWindow):
             "licence: all rights in them are reserved. Use them freely "
             "to refer to this program - cite it, show it, teach with "
             "it - but give a modified version a name of its own.</p>"
-            f"<p style='color:{theme.active()['muted']};'>Settings file:<br>{self.config_path}</p>",
+            f"<p style='color:{theme.active()['muted']};'>Settings file:<br>{self.config_path}</p>"
         )
 
     #: Remembers that the offer has been made, so it is made once.
