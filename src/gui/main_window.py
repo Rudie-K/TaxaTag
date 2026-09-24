@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.gui import theme
+from src.gui.analysis import AnalysisPanel
 from src.gui.primers import PrimerSetPanel, complete_locus, top_up_with_presets
 from src.gui.results import ResultsPanel
 from src.gui.widgets import CheckListView, HelpLabel, LogView, PathPicker
@@ -87,6 +88,7 @@ class MainWindow(QMainWindow):
         )
         self._refresh_resume()
         self.results_panel.set_results_folder(self.output_picker.value())
+        self.analysis_panel.set_results_folder(self.output_picker.value())
         self.statusBar().showMessage("Ready")
 
     # ------------------------------------------------------------------
@@ -185,6 +187,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(_padded(self.primer_panel), "Primer sets")
         self.results_panel = ResultsPanel()
         self.tabs.addTab(self.results_panel, "Results")
+        self.analysis_panel = AnalysisPanel()
+        self.tabs.addTab(self.analysis_panel, "Analysis")
 
         # Refreshed on returning to the Run tab, which covers the changes
         # that have no signal to listen to - a primer set switched off, a
@@ -766,6 +770,7 @@ class MainWindow(QMainWindow):
         """
         self._refresh_resume()
         self.results_panel.set_results_folder(self.output_picker.value())
+        self.analysis_panel.set_results_folder(self.output_picker.value())
 
     def refresh_plan(self) -> None:
         """
@@ -1349,8 +1354,9 @@ class MainWindow(QMainWindow):
         table = result.get("final_table")
         if table and paths.exists(table):
             self.results_panel.set_results_folder(self.output_picker.value())
+            self.analysis_panel.set_results_folder(self.output_picker.value())
             self.results_panel.load(Path(table), Path(result["run_dir"]))
-            self.tabs.setCurrentIndex(self.tabs.count() - 1)
+            self.tabs.setCurrentWidget(self.results_panel)
 
     # ------------------------------------------------------------------
     # Odds and ends
@@ -1458,6 +1464,7 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.worker.wait(10000)
 
+        self.analysis_panel.shutdown()
         self.save_settings()
         event.accept()
 

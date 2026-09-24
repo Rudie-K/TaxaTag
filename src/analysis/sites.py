@@ -71,6 +71,7 @@ class SampleSheet:
 
     path: Path
     sample_column: str
+    site_column: str = "Site"
     site_of: Dict[str, str] = field(default_factory=dict)
     controls: Set[str] = field(default_factory=set)
     without_site: Set[str] = field(default_factory=set)
@@ -105,7 +106,7 @@ class SampleSheet:
             more = f" And {len(conflicts) - 5} more sample(s) like it." if len(conflicts) > 5 else ""
             raise SheetError(" ".join(texts) + more)
 
-        sheet = cls(path=Path(path), sample_column=sample_column, rows=rows)
+        sheet = cls(path=Path(path), sample_column=sample_column, site_column=site_column, rows=rows)
         for sample, (place,) in ((s, tuple(p)) for s, p in places.items()):
             if place == A_CONTROL:
                 sheet.controls.add(sample)
