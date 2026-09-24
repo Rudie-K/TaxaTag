@@ -100,11 +100,15 @@ class SampleSheet:
                 places[sample].add((row.get(site_column) or "").strip())
         conflicts = sorted((sample, found) for sample, found in places.items() if len(found) > 1)
         if conflicts:
-            texts = [readiness.found("sheet-conflict", subject=sample, places=", ".join(sorted(
-                        p if p == A_CONTROL else (f"site {p}" if p else "no site") for p in found))).text
-                     for sample, found in conflicts[:5]]
-            more = f" And {len(conflicts) - 5} more sample(s) like it." if len(conflicts) > 5 else ""
-            raise SheetError(" ".join(texts) + more)
+            # One sentence, however many samples: thirty repetitions of the
+            # same sentence read as noise (Rudie, 24 September 2026).
+            sample, found = conflicts[0]
+            where = " and ".join(sorted(p if p == A_CONTROL else (p or "no site") for p in found))
+            if len(conflicts) == 1:
+                raise SheetError(readiness.found("sheet-conflict", subject=sample, places=where).text)
+            raise SheetError(f"{len(conflicts)} samples have more than one site in the sample sheet - "
+                             f"{sample}, for example, has {where}. Give each sample one site, and check "
+                             f"that '{site_column}' is the column that names the sites.")
 
         sheet = cls(path=Path(path), sample_column=sample_column, site_column=site_column, rows=rows)
         for sample, (place,) in ((s, tuple(p)) for s, p in places.items()):

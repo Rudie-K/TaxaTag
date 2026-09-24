@@ -91,7 +91,7 @@ _TABLE = (
               "{subject} was sequenced to {reads} reads on {locus}, under a tenth of the marker's "
               "median ({median}). A shallow sample finds fewer taxa; consider leaving it out."),
     Condition("sheet-conflict", BLOCKED, SITES, "never substitute silently (interface rule 1)",
-              "The sample sheet gives {subject} more than one place: {places}. Say which it belongs to."),
+              "{subject} has more than one site in the sample sheet ({places}); give each sample one site."),
     Condition("one-replicate", BLOCKED, CONSISTENCY, "a comparison needs two",
               "Site {subject} on {locus} pooled one sample, so its replicates cannot be compared."),
     Condition("unequal-replicates", WARNING, SITE_BETA, "Chao et al. 2014; Baselga 2010",

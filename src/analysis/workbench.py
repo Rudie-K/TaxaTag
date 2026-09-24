@@ -96,6 +96,16 @@ class Spec:
     needs_list: bool = False
     needs_review: bool = False
     needs_library: bool = False
+    uses_sheet: bool = False                    # a sample sheet helps, but is not required
+    uses_list: bool = False                     # a species list helps, but is not required
+
+    @property
+    def shows_sheet(self) -> bool:
+        return self.needs_sheet or self.uses_sheet
+
+    @property
+    def shows_list(self) -> bool:
+        return self.needs_list or self.uses_list
     options: Tuple[str, ...] = ("rank", "contaminants")   # which of the options row it uses
 
 
@@ -175,7 +185,7 @@ SPECS: Tuple[Spec, ...] = (
          "Whether sampling was enough: taxa expected from fewer or more samples, and an estimate of those missed.",
          False, _write_effort,
          (("Summary", "summary"), ("Curve", "curve"), ("Sites at equal effort", "sites")), chart=True,
-         options=("rank", "contaminants", "seed")),
+         options=("rank", "contaminants", "seed"), uses_sheet=True),
     Spec("possible_species", "Possible species", "every close match, ranked", IDENTIFICATION, readiness.NAMES,
          "For each sequence, the references it matched best, ranked, with how many references each species "
          "has - where a call could have gone another way.",
@@ -184,7 +194,7 @@ SPECS: Tuple[Spec, ...] = (
          "One row per call with its evidence beside it, and empty Outcome and Detection columns for you to "
          "fill. Save it, fill it in a spreadsheet, then choose it for identification accuracy. A species list "
          "adds whether each name is on it, and its habitat.",
-         False, _write_review_sheet, (("Calls", "sheet"),), needs_library=True, options=()),
+         False, _write_review_sheet, (("Calls", "sheet"),), needs_library=True, options=(), uses_list=True),
     Spec("identification_accuracy", "Identification accuracy", "precision and accuracy by rank", IDENTIFICATION,
          readiness.NAMES,
          "Precision and accuracy at each rank from a filled review sheet, as Bourret et al. (2023) define "
@@ -201,10 +211,28 @@ SPECS: Tuple[Spec, ...] = (
 
 BY_KEY = {spec.key: spec for spec in SPECS}
 
-NEEDS_A_SHEET = "Choose a sample sheet in the bar above: sites are pooled from it."
-NEEDS_A_LIST = "Choose a species list in the bar above: it says which species to look for."
+NEEDS_A_SHEET = "Choose a sample sheet above: it says which site each sample came from."
+NEEDS_A_LIST = "Choose a species list above: it says which species to look for."
 NEEDS_A_FILLED_SHEET = ("Choose a filled review sheet above: save the Review sheet, fill in its Outcome and "
                         "Detection columns, then choose it here.")
+
+#: What each input is, said once, under the analysis that uses it (writing-the-interface.md rule 4).
+ABOUT_THE_SHEET = ("A sample sheet is a file you make: one row per sample, naming the site it came from - "
+                   "for example two columns, Sample and Site. It is not the run's results table.")
+ABOUT_THE_LIST = ("A species list is the species that could be there - for example a regional checklist - "
+                  "one per row, in a column called ScientificName.")
+
+#: The columns only a TaxaTag results table has; a file carrying them is not a sheet or a list.
+RESULTS_COLUMNS = {"Scientific_Name", "ZOTU"}
+NOT_A_SHEET = ("That file is a run's results table, not a sample sheet. " + ABOUT_THE_SHEET.split(": ", 1)[0]
+               + ": one row per sample, naming the site it came from.")
+NOT_A_LIST = ("That file is a run's results table, not a species list. A species list is the species that "
+              "could be there, one per row, in a column called ScientificName.")
+
+
+def is_results_table(columns) -> bool:
+    """Whether a CSV's columns are a TaxaTag results table's, chosen where a sheet or list was wanted."""
+    return bool(RESULTS_COLUMNS & set(columns))
 NEEDS_THE_LIBRARY = "The reference library this run was searched against could not be found on this computer."
 
 

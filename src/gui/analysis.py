@@ -22,12 +22,13 @@ import csv
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QPointF, QRectF, QSortFilterProxyModel, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QFontInfo, QImage, QPainter, QPainterPath, QPen
+from PyQt6.QtCore import (QAbstractTableModel, QModelIndex, QPointF, QRect, QRectF, QSize, QSortFilterProxyModel, Qt,
+                          QThread, pyqtSignal)
+from PyQt6.QtGui import QColor, QFont, QFontInfo, QImage, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTableView, QTabWidget, QVBoxLayout,
-    QWidget,
+    QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStackedWidget, QStyle, QStyledItemDelegate,
+    QStyleOptionViewItem, QTableView, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from src.analysis import diversity, readiness, sites, workbench
@@ -38,11 +39,155 @@ from src.utils import platform as platform_utils
 #: The rank choices, in the words a user would use, and what each means to the analyses.
 RANKS = (("As identified", diversity.MIXED), ("Species", "species"), ("Genus", "genus"), ("Family", "family"))
 
-#: Marks a warning in the list, so it is never shown by colour alone (0024).
+#: How a warning is marked, in words, for screen readers and the status line.
 WARNING_SIGN = "⚠"
 
 HEADER_ROLE = Qt.ItemDataRole.UserRole + 1
 SORT_ROLE = Qt.ItemDataRole.UserRole + 2
+STATUS_ROLE = Qt.ItemDataRole.UserRole + 3
+
+#: The warning mark: the platform's own warning icon, drawn at the right-hand
+#: edge of the row where a status icon is expected, rather than a character
+#: pushed in front of the name (Rudie, 24 September 2026). The name keeps the
+#: ordinary text colour, which is readable on every ground; the icon carries
+#: the colour, so a warning is still never colour alone (0024).
+ICON_SIZE = 18
+
+
+def warning_icon(widget):
+    return widget.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning)
+
+
+class AnalysisItemDelegate(QStyledItemDelegate):
+    """
+    Draws the list: a group heading in bold, with a rule above it, so the
+    groups separate; an analysis in the ordinary text colour, greyed when it
+    cannot run; and a warning icon at the right-hand edge when it should be
+    read with care.
+    """
+
+    PAD = 10
+
+    def sizeHint(self, option, index):
+        if index.data(HEADER_ROLE):
+            size = super().sizeHint(option, index)
+            return QSize(size.width(), size.height() + (14 if index.row() else 6))
+        # As tall as the text needs at the width it will actually have, beside the icon's room.
+        width = max(80, self._right_edge(option) - option.rect.left() - ICON_SIZE - 2 * self.PAD - 12)
+        metrics = option.fontMetrics
+        height = sum(metrics.boundingRect(QRect(0, 0, width, 10000), int(Qt.TextFlag.TextWordWrap), line).height()
+                     for line in str(index.data() or "").split("\n"))
+        return QSize(width + ICON_SIZE + 2 * self.PAD, height + 16)
+
+    @staticmethod
+    def shaded(index) -> bool:
+        """Whether this analysis is an odd one of its group, counted from the group's heading."""
+        model, row, place = index.model(), index.row() - 1, 0
+        while row >= 0 and not model.index(row, 0).data(HEADER_ROLE):
+            place, row = place + 1, row - 1
+        return place % 2 == 1
+
+    @staticmethod
+    def _right_edge(option) -> int:
+        """
+        The visible right-hand edge. A list lays its rows out at their
+        preferred width, which can be wider than what is shown, so an icon
+        placed at the row's own end was drawn out of sight.
+        """
+        widget = option.widget
+        viewport = widget.viewport() if widget is not None and hasattr(widget, "viewport") else None
+        return min(option.rect.right(), viewport.width() - 1) if viewport is not None else option.rect.right()
+
+    def paint(self, painter, option, index):
+        colours = theme.active()
+        right = self._right_edge(option)
+        if index.data(HEADER_ROLE):
+            painter.save()
+            if index.row():
+                painter.setPen(QColor(colours["border"]))
+                painter.drawLine(option.rect.left() + 4, option.rect.top() + 5, right - 4, option.rect.top() + 5)
+            font = QFont(option.font)          # a copy: bolding the option's own font bolded every row
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor(colours["muted"]))
+            text_rect = option.rect.adjusted(8, 8 if index.row() else 0, -8, 0)
+            painter.drawText(text_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                             str(index.data()))
+            painter.restore()
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.features |= QStyleOptionViewItem.ViewItemFeature.WrapText
+        status = index.data(STATUS_ROLE)
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        # Selection is an outline, not a fill (Rudie, 24 September 2026): the
+        # row keeps its shade and its text colour, and the style is told it
+        # is not selected so it paints no highlight of its own.
+        opt.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus)
+        if self.shaded(index):
+            # Alternate rows a shade apart, so each analysis reads as its own
+            # (Rudie, 24 September 2026): the panel and its sunken shade,
+            # white and blue-grey in the light scheme, the dark blue and a
+            # lighter one in the dark. Each group starts on the lighter row.
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colours["panel_sunken"]))
+            # Rounded as the selection outline is, so no square corner shows outside it.
+            painter.drawRoundedRect(QRectF(option.rect.left() + 1, option.rect.top() + 1,
+                                           right - option.rect.left() - 1, option.rect.height() - 2), 6, 6)
+            painter.restore()
+        if status == readiness.BLOCKED:
+            from PyQt6.QtGui import QPalette
+
+            opt.palette.setColor(QPalette.ColorRole.Text, QColor(colours["text_disabled"]))
+        opt.rect = QRect(option.rect.left(), option.rect.top(),
+                         right - option.rect.left() - ICON_SIZE - self.PAD, option.rect.height())
+        widget = option.widget
+        style = widget.style() if widget is not None else None
+        # The row's own background first, across its whole width, then the text beside the icon's room.
+        background = QStyleOptionViewItem(option)
+        self.initStyleOption(background, index)
+        background.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus)
+        background.text = ""
+        background.rect = QRect(option.rect.left(), option.rect.top(), right - option.rect.left() + 1,
+                                option.rect.height())
+        if style is not None:
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, background, painter, widget)
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+        if status == readiness.WARNING and widget is not None:
+            box = QRect(right - ICON_SIZE - self.PAD // 2,
+                        option.rect.center().y() - ICON_SIZE // 2, ICON_SIZE, ICON_SIZE)
+            warning_icon(widget).paint(painter, box)
+        if selected:
+            self._bevel(painter, QRectF(option.rect.left() + 1.5, option.rect.top() + 1.5,
+                                        right - option.rect.left() - 3, option.rect.height() - 3), colours)
+
+    @staticmethod
+    def _bevel(painter, box: QRectF, colours) -> None:
+        """
+        A rounded outline in the accent colour, with a lighter edge inside
+        its top and a darker one inside its bottom, so it reads as raised
+        rather than drawn on.
+        """
+        from PyQt6.QtGui import QLinearGradient
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(colours["accent"]), 2))
+        painter.drawRoundedRect(box, 6, 6)
+        inner = box.adjusted(2, 2, -2, -2)
+        edge = QLinearGradient(inner.topLeft(), inner.bottomLeft())
+        light, dark = QColor(colours["accent_hover"]), QColor(colours["accent_pressed"])
+        light.setAlpha(110)
+        dark.setAlpha(110)
+        edge.setColorAt(0.0, light)
+        edge.setColorAt(0.5, QColor(0, 0, 0, 0))
+        edge.setColorAt(1.0, dark)
+        painter.setPen(QPen(edge, 1))
+        painter.drawRoundedRect(inner, 4, 4)
+        painter.restore()
 
 
 # ---------------------------------------------------------------- the table
@@ -289,6 +434,8 @@ class AnalysisPanel(QWidget):
         self._library = None                       # the chosen run's own reference library
         self._species_list = None
         self._review_sheet: Optional[Path] = None
+        self._sheet_problem = ""                   # why a chosen sample sheet cannot be used
+        self._sample_column_found = True
         self._outcomes: Dict[str, workbench.Outcome] = {}
         self._statuses: Dict[str, tuple] = {}
         self._chart_outcome: Optional[workbench.Outcome] = None
@@ -327,8 +474,11 @@ class AnalysisPanel(QWidget):
             bar.addWidget(widget)
         bar.addStretch(1)
 
-        # What the run is read against, on a row of its own: the two sheets
-        # and their columns would not fit beside the run on a laptop screen.
+        # A sample sheet and a species list are asked for only by the
+        # analyses that read them, beside those analyses, with a sentence
+        # saying what each is. In one bar at the top, for every analysis,
+        # the two looked alike and a run's own results table was taken for
+        # a sample sheet (Rudie, 24 September 2026).
         self.list_label = QLabel("None")
         self.list_button = QPushButton("Choose…")
         self.list_button.setAccessibleName("Choose a species list")
@@ -338,16 +488,29 @@ class AnalysisPanel(QWidget):
         self.list_clear = QPushButton("Clear")
         self.list_clear.setAccessibleName("Clear the species list")
         self.list_clear.clicked.connect(lambda: self.set_species_list(None))
+        self.sheet_title = QLabel("Sample sheet")
+        self.list_title = QLabel("Species list")
         inputs = QHBoxLayout()
         inputs.setSpacing(8)
-        for widget in (QLabel("Sample sheet"), self.sheet_label, self.sheet_button, self.sheet_clear,
+        for widget in (self.sheet_title, self.sheet_label, self.sheet_button, self.sheet_clear,
                        self.sample_column_label, self.sample_column, self.site_column_label, self.site_column,
-                       QLabel("Species list"), self.list_label, self.list_button, self.list_clear):
+                       self.list_title, self.list_label, self.list_button, self.list_clear):
             inputs.addWidget(widget)
         inputs.addStretch(1)
+        from src.gui.widgets import HelpLabel
+
+        self.input_hint = HelpLabel("")
 
         # The list, and the preview of the last chart at its foot.
         self.list = QListWidget()
+        self.list.setObjectName("analysisList")
+        self.list.setItemDelegate(AnalysisItemDelegate(self.list))
+        # Rows fill the visible width and wrap a long line rather than cut
+        # it: at the largest dyslexia-friendly text on a laptop screen the
+        # rows beside the list need more room than any fixed width leaves.
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setWordWrap(True)
+        self.list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.list.setAccessibleName("Analyses")
         self.list.currentItemChanged.connect(lambda *_: self._show_selected())
         group = None
@@ -361,10 +524,7 @@ class AnalysisPanel(QWidget):
             item = QListWidgetItem(f"{spec.title}\n{spec.subtitle}")
             item.setData(Qt.ItemDataRole.UserRole, spec.key)
             self.list.addItem(item)
-        # Wide enough for the longest line, so no subtitle needs a sideways scrollbar.
-        widest = max(self.list.fontMetrics().horizontalAdvance(line) for spec in workbench.SPECS
-                     for line in (f"{WARNING_SIGN} {spec.title}", spec.subtitle))
-        self.list.setMinimumWidth(widest + 48)
+        self._fit_list()
         self.preview = ChartWidget(preview=True)
         self.preview.clicked.connect(self._open_chart)
         self.preview_label = QLabel("Last chart")
@@ -412,8 +572,12 @@ class AnalysisPanel(QWidget):
                        self.review_label, self.review_name, self.review_button):
             options.addWidget(widget)
         options.addStretch(1)
-        options.addWidget(self.run_button)
-        options.addWidget(self.save_button)
+        options.setSpacing(12)
+        # Run and Save in the top bar, where there is room at every text
+        # size: beside the options, the largest dyslexia-friendly text left
+        # them squeezed on a laptop screen.
+        bar.addWidget(self.run_button)
+        bar.addWidget(self.save_button)
 
         self.table_picker = QComboBox()
         self.table_picker.setAccessibleName("Table shown")
@@ -452,6 +616,7 @@ class AnalysisPanel(QWidget):
         self.result_tabs.addTab(self.chart, "Chart")
         self.result_tabs.addTab(self.notes, "Notes")
         self.placeholder = QLabel()
+        self.placeholder.setObjectName("analysisPlaceholder")
         self.placeholder.setWordWrap(True)
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.stack = QStackedWidget()
@@ -461,6 +626,8 @@ class AnalysisPanel(QWidget):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addLayout(options)
+        right_layout.addLayout(inputs)
+        right_layout.addWidget(self.input_hint)
         right_layout.addWidget(self.stack, 1)
 
         splitter = QSplitter()
@@ -471,15 +638,19 @@ class AnalysisPanel(QWidget):
 
         self.status = QLabel()
         self.status.setWordWrap(True)
+        self.status_icon = QLabel()
+        self.status_icon.setPixmap(warning_icon(self).pixmap(ICON_SIZE, ICON_SIZE))
+        self.status_icon.setAccessibleName("Warning")
+        self.status_icon.hide()
         self.open_button = QPushButton("Open folder")
         self.open_button.clicked.connect(self._open_saved)
         status_row = QHBoxLayout()
         status_row.addWidget(self.status, 1)
+        status_row.addWidget(self.status_icon)
         status_row.addWidget(self.open_button)
 
         outer = QVBoxLayout(self)
         outer.addLayout(bar)
-        outer.addLayout(inputs)
         outer.addWidget(splitter, 1)
         outer.addLayout(status_row)
         self._set_sheet_widgets()
@@ -519,7 +690,13 @@ class AnalysisPanel(QWidget):
             self.set_sheet(Path(path))
 
     def set_sheet(self, path: Optional[Path]) -> None:
-        """Take a sample sheet, offering its columns, with the one that names this run's samples first."""
+        """
+        Take a sample sheet. The column naming this run's samples is found by
+        matching them; the site column is the one called Site, or else the
+        person chooses it - it is never guessed, because a wrong guess reads
+        as every sample having several sites.
+        """
+        self._sheet_problem = ""
         self._sheet_path = Path(path) if path else None
         self.sample_column.blockSignals(True)
         self.site_column.blockSignals(True)
@@ -534,6 +711,9 @@ class AnalysisPanel(QWidget):
                 self._say(f"That sample sheet could not be read: {problem}", warning=True)
                 rows = []
             columns = list(rows[0]) if rows else []
+            if workbench.is_results_table(columns):
+                self._sheet_path, rows, columns = None, [], []
+                self._say(workbench.NOT_A_SHEET, warning=True)
             samples = set()
             if self.run_dir():
                 samples = {row["Sample"] for row in diversity.read_table(self.run_dir()) if row.get("Sample")}
@@ -541,8 +721,14 @@ class AnalysisPanel(QWidget):
                            default=None)
             ordered = ([matching] if matching else []) + [c for c in columns if c != matching]
             self.sample_column.addItems(ordered)
-            sites_first = (["Site"] if "Site" in columns else []) + [c for c in columns if c != "Site"]
-            self.site_column.addItems([c for c in sites_first if c != matching] or sites_first)
+            named_site = next((c for c in columns if c.strip().lower() == "site"), None)
+            if not named_site:
+                self.site_column.addItem("Choose the column that names the site", "")
+            for column in ([named_site] if named_site else []) + [c for c in columns
+                                                                  if c not in (named_site, matching)]:
+                self.site_column.addItem(column, column)
+            self._sample_column_found = bool(matching) and bool(
+                {(r.get(matching) or "").strip() for r in rows} & samples)
         self.sample_column.blockSignals(False)
         self.site_column.blockSignals(False)
         self._set_sheet_widgets()
@@ -558,6 +744,9 @@ class AnalysisPanel(QWidget):
         from src.analysis.adjudication import SpeciesList
 
         self._species_list = None
+        if path and self._is_results_table(Path(path)):
+            self._say(workbench.NOT_A_LIST, warning=True)
+            path = None
         if path:
             try:
                 loaded = SpeciesList.load(Path(path))
@@ -570,6 +759,14 @@ class AnalysisPanel(QWidget):
                     self._say("That file names no species: it needs a ScientificName column.", warning=True)
         self._set_list_widgets()
         self._context_changed(keep_markers=True)
+
+    @staticmethod
+    def _is_results_table(path: Path) -> bool:
+        try:
+            with open(path, encoding="utf-8-sig", newline="") as handle:
+                return workbench.is_results_table(next(csv.reader(handle), []))
+        except (OSError, UnicodeDecodeError, csv.Error):
+            return False
 
     def _set_list_widgets(self) -> None:
         chosen = self._species_list
@@ -591,21 +788,43 @@ class AnalysisPanel(QWidget):
     def _set_sheet_widgets(self) -> None:
         chosen = self._sheet_path is not None
         self.sheet_label.setText(self._sheet_path.name if chosen else "None")
-        for widget in (self.sheet_clear, self.sample_column, self.site_column, self.sample_column_label,
-                       self.site_column_label):
-            widget.setVisible(chosen)
+        self._show_inputs()
+
+    def _show_inputs(self) -> None:
+        """The sheet and the list, and the sentence saying what they are, only where this analysis reads them."""
+        spec = self.selected_spec() if hasattr(self, "list") else None
+        sheet, species = bool(spec and spec.shows_sheet), bool(spec and spec.shows_list)
+        chosen = self._sheet_path is not None
+        for widget in (self.sheet_title, self.sheet_label, self.sheet_button):
+            widget.setVisible(sheet)
+        for widget in (self.sheet_clear, self.site_column_label, self.site_column):
+            widget.setVisible(sheet and chosen)
+        # The sample column is found by matching the run's samples; asked for only if none matched.
+        for widget in (self.sample_column_label, self.sample_column):
+            widget.setVisible(sheet and chosen and not getattr(self, "_sample_column_found", True))
+        for widget in (self.list_title, self.list_label, self.list_button):
+            widget.setVisible(species)
+        self.list_clear.setVisible(species and self._species_list is not None)
+        hints = ([workbench.ABOUT_THE_SHEET] if sheet and not chosen else []) + (
+            [workbench.ABOUT_THE_LIST] if species and self._species_list is None else [])
+        self.input_hint.setText(" ".join(hints))
+        self.input_hint.setVisible(bool(hints))
 
     def _load_sheet(self) -> None:
         self._sheet = None
-        if self._sheet_path and self.sample_column.currentText() and self.site_column.currentText():
+        self._sheet_problem = ""
+        if self._sheet_path and not self.site_column.currentData():
+            self._sheet_problem = "Choose which column of the sample sheet names the site."
+        if self._sheet_path and self.sample_column.currentText() and self.site_column.currentData():
             try:
                 self._sheet = sites.SampleSheet.load(self._sheet_path, self.sample_column.currentText(),
-                                                     self.site_column.currentText())
+                                                     self.site_column.currentData())
                 if self.run_dir():
                     samples = {row["Sample"] for row in diversity.read_table(self.run_dir()) if row.get("Sample")}
                     sites.check(self._sheet, samples)
             except (sites.SheetError, ValueError) as problem:
                 self._sheet = None
+                self._sheet_problem = str(problem)
                 self._say(str(problem), warning=True)
         self._context_changed(keep_markers=True)
 
@@ -652,29 +871,45 @@ class AnalysisPanel(QWidget):
         self._outcomes.clear()
 
     def _paint_list(self) -> None:
-        colours = theme.active()
         for row in range(self.list.count()):
             item = self.list.item(row)
             if item.data(HEADER_ROLE):
-                item.setForeground(QColor(colours["muted"]))
                 continue
             spec = workbench.BY_KEY[item.data(Qt.ItemDataRole.UserRole)]
             status, reasons = self._statuses.get(spec.key, (workbench.AVAILABLE, []))
-            sign = f"{WARNING_SIGN} " if status == readiness.WARNING else ""
-            item.setText(f"{sign}{spec.title}\n{spec.subtitle}")
-            colour = {readiness.BLOCKED: colours["text_disabled"], readiness.WARNING: colours["log_warning"]}.get(
-                status, colours["text"])
-            item.setForeground(QColor(colour))
+            if spec.needs_sheet and self._sheet_problem:
+                status, reasons = readiness.BLOCKED, [self._sheet_problem]
+            item.setText(f"{spec.title}\n{spec.subtitle}")
+            item.setData(STATUS_ROLE, status)
             words = {readiness.BLOCKED: "not available", readiness.WARNING: "read with care"}.get(status, "")
             item.setToolTip("\n\n".join([spec.tooltip] + reasons))
             item.setData(Qt.ItemDataRole.AccessibleTextRole,
                          f"{spec.title}, {spec.subtitle}" + (f", {words}" if words else ""))
 
+    def _fit_list(self) -> None:
+        """
+        Wide enough for the longest line in the font now in use, so no name
+        is cut short. Worked out again whenever the font changes: the text
+        size and the dyslexia-friendly face are chosen in Settings while the
+        tab is open, and a width fixed at start-up cut off the larger text.
+        """
+        metrics = self.list.fontMetrics()
+        bold = QFont(self.list.font())
+        bold.setBold(True)
+        from PyQt6.QtGui import QFontMetrics
+
+        widest = max([metrics.horizontalAdvance(line) for spec in workbench.SPECS
+                      for line in (spec.title, spec.subtitle)]
+                     + [QFontMetrics(bold).horizontalAdvance(spec.group) for spec in workbench.SPECS])
+        self.list.setMinimumWidth(widest + ICON_SIZE + 2 * AnalysisItemDelegate.PAD + 48)
+
     def changeEvent(self, event) -> None:
         from PyQt6.QtCore import QEvent
 
-        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.PaletteChange):
-            self._paint_list()
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.PaletteChange, QEvent.Type.FontChange):
+            if hasattr(self, "list"):
+                self._fit_list()
+                self._paint_list()
         super().changeEvent(event)
 
     # ------------------------------------------------------------ showing a result
@@ -699,6 +934,7 @@ class AnalysisPanel(QWidget):
                 widget.setVisible(option in uses)
         for widget in (self.review_label, self.review_name, self.review_button):
             widget.setVisible(spec is not None and spec.needs_review)
+        self._show_inputs()
         outcome = self._outcomes.get(spec.key) if spec else None
         self.run_button.setEnabled(spec is not None and self.run_dir() is not None and self._worker is None)
         self.save_button.setEnabled(outcome is not None and outcome.saved_to is None)
@@ -711,8 +947,10 @@ class AnalysisPanel(QWidget):
             return
         if outcome is None:
             status, reasons = self._statuses.get(spec.key, (workbench.AVAILABLE, []))
-            lead = f"Press Run to compute {spec.title.lower()} for this run."
-            if status == readiness.BLOCKED and reasons:
+            lead = f"Press Run to see the {spec.title.lower()} for this run."
+            if spec.needs_sheet and self._sheet_problem:
+                lead = self._sheet_problem
+            elif status == readiness.BLOCKED and reasons:
                 lead = reasons[0]
             self._placeholder(lead)
             return
@@ -847,8 +1085,10 @@ class AnalysisPanel(QWidget):
 
     def _say(self, text: str, warning: bool = False) -> None:
         colours = theme.active()
-        self.status.setText((f"{WARNING_SIGN} " if warning else "") + text)
-        self.status.setStyleSheet(f"color: {colours['log_warning'] if warning else colours['muted']};")
+        self.status.setText(text)
+        self.status.setStyleSheet(f"color: {colours['text'] if warning else colours['muted']};")
+        self.status.setAccessibleName(("Warning: " if warning else "") + text)
+        self.status_icon.setVisible(warning)
 
     def shutdown(self) -> None:
         """Before the window closes: finish any running analysis and remove unsaved working folders."""

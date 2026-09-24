@@ -411,6 +411,32 @@ QHeaderView::section {{
 
 QFrame#rule {{ color: {palette['border']}; }}
 
+/* The Analysis tab's list and its empty result area are panels of their
+   own, bordered like the tables, so the list, the options and the result
+   read as three places rather than one ground (Rudie, 24 September 2026:
+   "the different sections don't separate very well"). Unstyled, the dark
+   scheme drew a selected row as light text on a light highlight. */
+QListWidget#analysisList {{
+    background-color: {palette['panel']};
+    border: {px} solid {palette['border']};
+    border-radius: 6px;
+    padding: 4px;
+}}
+QListWidget#analysisList::item {{ padding: 4px 6px; border-radius: 4px; }}
+/* Hover is a shade; selection is the delegate's bevelled outline, drawn
+   over the row's own shade, so no fill here (Rudie, 24 September 2026). */
+QListWidget#analysisList::item:hover {{ background-color: {palette['pressed']}; }}
+QListWidget#analysisList::item:selected {{
+    background-color: transparent;
+    color: {palette['text']};
+}}
+QLabel#analysisPlaceholder {{
+    background-color: {palette['panel']};
+    border: {px} solid {palette['border']};
+    border-radius: 6px;
+    padding: 16px;
+}}
+
 QCheckBox {{ spacing: 8px; padding: 3px 0; }}
 
 /* Text sits on whatever is behind it. The QWidget rule above gives every
