@@ -307,27 +307,53 @@ class ReferenceLibrary:
         sequenced there is nothing for the barcode to be ambiguous about,
         and the wrong name wins cleanly. These three counts are that grade's
         raw material, from the catalogue alone; `docs/science/`, section 3.
+
+        Where the catalogue records each record's genes (decision 0041),
+        only records *of the marker's gene* count, and a whole mitogenome
+        counts for every marker: the marine core's 12S volume holds every
+        fish mitochondrial gene, and counted whole it overstated 12S
+        references about fifteen-fold (planned item 9). A catalogue from
+        before then counts every record of the volume, and says so
+        (`gene_aware`).
         """
-        empty = {"species_references": 0, "genus_references": 0, "genus_species": 0}
+        empty = {"species_references": 0, "genus_references": 0, "genus_species": 0,
+                 "gene_aware": False}
         try:
             connection = self.connect()
         except (FileNotFoundError, sqlite3.Error):
             return empty
         genus = genus or species.split(" ")[0]
+        gene_aware = self.knows_genes()
+        of_gene, arguments = "", ()
+        if gene_aware:
+            from src.reference.genes import GENE_MITOGENOME, MARKER_GENE
+
+            of_gene = " AND ('|' || genes || '|' LIKE ? OR '|' || genes || '|' LIKE ?)"
+            arguments = (f"%|{MARKER_GENE.get(marker, marker)}|%", f"%|{GENE_MITOGENOME}|%")
         try:
             for_species = connection.execute(
-                "SELECT COUNT(*) FROM reference_library WHERE marker_gene = ? AND species = ?",
-                (marker, species),
+                "SELECT COUNT(*) FROM reference_library WHERE marker_gene = ? AND species = ?" + of_gene,
+                (marker, species, *arguments),
             ).fetchone()[0]
             for_genus, distinct = connection.execute(
                 "SELECT COUNT(*), COUNT(DISTINCT species) FROM reference_library "
-                "WHERE marker_gene = ? AND genus = ?",
-                (marker, genus),
+                "WHERE marker_gene = ? AND genus = ?" + of_gene,
+                (marker, genus, *arguments),
             ).fetchone()
         except sqlite3.Error:
             return empty
         return {"species_references": for_species, "genus_references": for_genus,
-                "genus_species": distinct}
+                "genus_species": distinct, "gene_aware": gene_aware}
+
+    def knows_genes(self) -> bool:
+        """Whether the catalogue records each record's genes (decision 0041)."""
+        if getattr(self, "_knows_genes", None) is None:
+            try:
+                columns = {row[1] for row in self.connect().execute("PRAGMA table_info(reference_library)")}
+            except (FileNotFoundError, sqlite3.Error):
+                return False
+            self._knows_genes = "genes" in columns
+        return self._knows_genes
 
     def counts_by_marker(self) -> Dict[str, int]:
         """How many reference sequences the catalogue holds for each marker."""

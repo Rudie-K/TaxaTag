@@ -38,7 +38,14 @@ from typing import Dict, Iterable, List
 
 from src.analysis.adjudication import SpeciesList
 
-COLUMNS = ["Marker", "Species", "Matched_As", "Genus", "Species_References", "Genus_References", "Genus_Species", "Grade"]
+COLUMNS = ["Marker", "Species", "Matched_As", "Genus", "Species_References", "Genus_References", "Genus_Species", "Grade",
+           "Counted"]
+
+#: What a count counted. A catalogue that records each record's gene
+#: (decision 0041) counts records *of the marker's gene*; an older one counts
+#: every record of the volume, which on the marine core's 12S volume
+#: overstated the listed fishes' references twelve-fold (planned item 9).
+COUNTED_BY_GENE, COUNTED_WHOLE_VOLUME = "records of the gene", "every record in the volume"
 GRADE_NAMED, GRADE_GENUS, GRADE_ABSENT = "named", "genus", "absent"
 
 
@@ -77,8 +84,14 @@ def coverage_rows(library, species_list: SpeciesList, markers: Iterable[str]) ->
                 "Genus": genus, "Species_References": str(cover["species_references"]),
                 "Genus_References": str(cover["genus_references"]), "Genus_Species": str(cover["genus_species"]),
                 "Grade": grade,
+                "Counted": COUNTED_BY_GENE if cover.get("gene_aware") or library_knows_genes(library) else COUNTED_WHOLE_VOLUME,
             })
     return rows
+
+
+def library_knows_genes(library) -> bool:
+    knows = getattr(library, "knows_genes", None)
+    return bool(knows()) if callable(knows) else False
 
 
 def summarise(rows: List[Dict[str, str]]) -> Dict[str, Dict[str, int]]:

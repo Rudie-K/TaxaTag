@@ -28,6 +28,8 @@ from src.reference.build import (
     create_empty_library,
     ensure_indexes,
     load_accession_taxids,
+    rebuild_taxonomy_matrix,
+    record_genes,
     repair_bundled_names,
 )
 from src.reference.library import ReferenceLibrary
@@ -193,6 +195,35 @@ def command_repair(args, reporter) -> int:
     try:
         repair_bundled_names(Path(args.library), taxids, args.marker, reporter)
     except FileNotFoundError as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+
+
+def command_genes(args, reporter) -> int:
+    from src.reference.genes import load_mitofish
+
+    for path in (args.annotation, args.descriptions):
+        if not Path(path).exists():
+            print(f"not found: {path}", file=sys.stderr)
+            return 1
+    reporter.info("Reading MitoFish's gene annotation and GenBank titles...")
+    annotated, titles = load_mitofish(Path(args.annotation), Path(args.descriptions))
+    try:
+        record_genes(Path(args.library), annotated, titles, reporter)
+    except FileNotFoundError as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+
+
+def command_taxonomy(args, reporter) -> int:
+    if not Path(args.taxdump).exists():
+        print(f"not found: {args.taxdump}", file=sys.stderr)
+        return 1
+    try:
+        rebuild_taxonomy_matrix(Path(args.library), Path(args.taxdump), reporter)
+    except (FileNotFoundError, KeyError) as error:
         print(error, file=sys.stderr)
         return 1
     return 0
@@ -396,6 +427,13 @@ def build_parser() -> argparse.ArgumentParser:
     repair.add_argument("--taxids", required=True, help="the source's accession-to-taxid Parquet table (MitoFish: seq_taxonid.parquet)")
     repair.add_argument("--marker", "-m", default="12S")
     repair.set_defaults(handler=command_repair)
+    genes = subparsers.add_parser("genes", help="record which gene each record holds, from its source's annotation (decision 0041)")
+    genes.add_argument("--annotation", required=True, help="MitoFish's seq_annotation.parquet")
+    genes.add_argument("--descriptions", required=True, help="MitoFish's seq_description.parquet")
+    genes.set_defaults(handler=command_genes)
+    taxonomy = subparsers.add_parser("taxonomy", help="rebuild the taxonomy matrix from NCBI's ranked lineage (decision 0042)")
+    taxonomy.add_argument("--taxdump", required=True, help="NCBI's new_taxdump.tar.gz")
+    taxonomy.set_defaults(handler=command_taxonomy)
 
     recipe = subparsers.add_parser(
         "recipe", help="check, and optionally build, a marker from known sources"

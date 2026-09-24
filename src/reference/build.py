@@ -30,6 +30,7 @@ from src.reference.library import (
     CATALOGUE_NAME,
     LINEAGE_COLUMNS,
     VOLUMES_DIR,
+    ReferenceLibrary,
     is_unknown,
 )
 from src.utils.process import run_tool
@@ -678,6 +679,198 @@ def repair_bundled_names(library_root: Path, taxid_map: Dict[str, str], marker: 
         connection.close()
     reporter.info(f"{marker}: {counts['candidates']:,} records looked at; {counts['renamed']:,} named to species, "
                   f"{counts['partly']:,} to a higher rank, {counts['unchanged']:,} left as they were.")
+    return counts
+
+
+#: What each source's records hold, where the source is one gene by
+#: construction. MitoFish is not: its partial-sequence set is every fish
+#: mitochondrial sequence, so its records are read from its annotation.
+GENE_BY_CONSTRUCTION = {"MIDORI2": None, "BOLD": "COI", "PR2": "18S"}
+
+
+def volume_lengths(volume_dir: Path, volume_name: str) -> Dict[str, int]:
+    """Each record's length, as the BLAST volume holds it."""
+    from src.utils.platform import get_bundled_bin, short_path
+
+    result = run_tool([str(get_bundled_bin("blastdbcmd")), "-db", volume_name, "-entry", "all", "-outfmt", "%a|%l"],
+                      cwd=short_path(volume_dir))
+    lengths: Dict[str, int] = {}
+    for line in result.output.splitlines():
+        record, _, length = line.strip().partition("|")
+        if record and length.isdigit():
+            lengths[record] = int(length)
+    return lengths
+
+
+def record_genes(library_root: Path, annotated: Dict[str, Set[str]], titles: Dict[str, str],
+                 reporter: Optional[Reporter] = None) -> Dict[str, Dict[str, int]]:
+    """
+    Write each record's genes and title flags into the catalogue (decision
+    0041, planned item 9). Read-write, deliberately, like
+    `repair_bundled_names`: the one maintenance step a person runs on
+    purpose, on a library they have backed up. The BLAST volumes are not
+    touched.
+
+    `annotated` and `titles` are MitoFish's, from `genes.load_mitofish`. A
+    bundled record holds what any of its parts holds. A record of a
+    one-gene source holds its volume's gene. Returns, per marker, how
+    many records hold each gene set.
+    """
+    from src.reference import genes as genes_module
+    from src.reference.sources import MITOGENOME_MIN_LENGTH
+
+    reporter = reporter or console_reporter()
+    library = ReferenceLibrary(Path(library_root))
+    catalogue = Path(library_root) / CATALOGUE_NAME
+    if not catalogue.exists():
+        raise FileNotFoundError(f"No reference catalogue at {catalogue}")
+    connection = sqlite3.connect(catalogue)
+    tally: Dict[str, Dict[str, int]] = {}
+    try:
+        present = {row[1] for row in connection.execute("PRAGMA table_info(reference_library)")}
+        for column in ("genes", "flags"):
+            if column not in present:
+                connection.execute(f"ALTER TABLE reference_library ADD COLUMN {column} TEXT")
+        markers = [row[0] for row in connection.execute("SELECT DISTINCT marker_gene FROM reference_library")]
+        for marker in markers:
+            volume = library.volume(marker).path
+            lengths = volume_lengths(volume.parent, volume.name) if volume.parent.exists() else {}
+            counts: Dict[str, int] = defaultdict(int)
+            updates = []
+            rows = connection.execute("SELECT accession, common_name FROM reference_library WHERE marker_gene = ?",
+                                      (marker,)).fetchall()
+            for record, common_name in rows:
+                source, _, accessions = (common_name or "").partition(" ")
+                accessions = accessions.split("Acc:", 1)[1].strip() if "Acc:" in accessions else ""
+                if source == "MitoFish":
+                    held, flags = set(), set()
+                    for part in split_bundle(accessions):
+                        part = part.split(".")[0]
+                        held |= genes_module.genes_of(annotated.get(part, ()), titles.get(part, ""), 0,
+                                                      MITOGENOME_MIN_LENGTH)
+                        flags |= genes_module.flags_in(titles.get(part, ""))
+                    if lengths.get(record, 0) >= MITOGENOME_MIN_LENGTH:
+                        held.add(genes_module.GENE_MITOGENOME)
+                else:
+                    gene = GENE_BY_CONSTRUCTION.get(source) or genes_module.MARKER_GENE.get(marker, marker)
+                    held, flags = {gene}, set()
+                encoded = genes_module.encode(held)
+                counts[encoded or "(unknown)"] += 1
+                updates.append((encoded, genes_module.encode(flags), record))
+            connection.executemany("UPDATE reference_library SET genes = ?, flags = ? WHERE accession = ?", updates)
+            connection.commit()
+            tally[marker] = dict(counts)
+            holding = sum(n for g, n in counts.items() if genes_module.holds(genes_module.decode(g), marker))
+            reporter.info(f"{marker}: {len(rows):,} records; {holding:,} hold {genes_module.MARKER_GENE.get(marker, marker)} "
+                          "or are a whole mitogenome.")
+    finally:
+        connection.close()
+    return tally
+
+
+#: `rankedlineage.dmp`'s columns after tax_id and name: each node's
+#: *ancestors* at the ranks NCBI names, never the node itself.
+_RANKED_COLUMNS = ("species", "genus", "family", "order_rank", "class", "phylum", "kingdom")
+_NODE_RANK_COLUMN = {"species": "species", "genus": "genus", "family": "family", "order": "order_rank",
+                     "class": "class", "phylum": "phylum", "kingdom": "kingdom"}
+#: What the matrix writes for a rank a node does not have, as the first build did.
+MATRIX_BLANK = "Unassigned"
+#: How NCBI's .dmp files separate their fields.
+_DMP_SEPARATOR = "\t|"
+
+
+def _dump_rows(tar, member: str):
+    handle = tar.extractfile(member)
+    if handle is None:
+        raise FileNotFoundError(f"{member} is not in the taxonomy dump")
+    for line in handle:
+        yield [part.strip() for part in line.decode("utf-8").split(_DMP_SEPARATOR)]
+
+
+def rebuild_taxonomy_matrix(library_root: Path, taxdump: Path, reporter: Optional[Reporter] = None) -> Dict[str, int]:
+    """
+    Rebuild `ncbi_taxonomy_matrix` from NCBI's own ranked lineage (decision
+    0042, planned item 11). Read-write, deliberately, on a library a person
+    has backed up; the BLAST volumes and the records are not touched.
+
+    The July 2026 build walked `nodes.dmp` upwards after setting every
+    node's species to its own name, so a genus read as a species named
+    after itself - 133,254 genus-level rows - and a record filed under
+    *Pomatoschistus* voted as a species called "Pomatoschistus" (decision
+    0030; the Sussex Audit's issue 48). `rankedlineage.dmp` holds each
+    node's ancestors at NCBI's own ranks and never the node itself, so the
+    node's name goes into the column of its own rank from `nodes.dmp`, and
+    into no other. A genus's species is blank; a subspecies' is its
+    species. `merged.dmp` carries retired taxids forward, which the first
+    build did not, so a hit reporting a merged taxid still has a lineage.
+
+    Written into a new table and swapped in one transaction. The dump's
+    own date is recorded in `library_notes`. 0030's guard stays: a
+    one-word species is wrong from any source.
+    """
+    import datetime
+    import tarfile
+
+    reporter = reporter or console_reporter()
+    catalogue = Path(library_root) / CATALOGUE_NAME
+    if not catalogue.exists():
+        raise FileNotFoundError(f"No reference catalogue at {catalogue}")
+    counts = {"rows": 0, "merged": 0, "species_rows": 0, "genus_rows": 0, "genera_with_a_species": 0,
+              "one_word_species": 0}
+    connection = sqlite3.connect(catalogue)
+    try:
+        with tarfile.open(taxdump, "r:gz") as tar:
+            dumped = datetime.date.fromtimestamp(tar.getmember("rankedlineage.dmp").mtime).isoformat()
+            reporter.info("Reading each node's own rank from nodes.dmp...")
+            rank_of = {parts[0]: parts[2] for parts in _dump_rows(tar, "nodes.dmp") if len(parts) > 2}
+            connection.execute("DROP TABLE IF EXISTS ncbi_taxonomy_matrix_new")
+            connection.execute("""CREATE TABLE ncbi_taxonomy_matrix_new (tax_id TEXT PRIMARY KEY,
+                kingdom TEXT, phylum TEXT, class TEXT, order_rank TEXT, family TEXT, genus TEXT, species TEXT)""")
+            reporter.info("Reading every lineage from rankedlineage.dmp...")
+            batch = []
+            for parts in _dump_rows(tar, "rankedlineage.dmp"):
+                if len(parts) < 9 or not parts[0]:
+                    continue
+                lineage = dict(zip(_RANKED_COLUMNS, parts[2:9]))
+                own = _NODE_RANK_COLUMN.get(rank_of.get(parts[0], ""))
+                if own:
+                    lineage[own] = parts[1]
+                counts["rows"] += 1
+                counts["species_rows"] += own == "species"
+                counts["genus_rows"] += own == "genus"
+                species = lineage.get("species", "")
+                counts["genera_with_a_species"] += own == "genus" and bool(species)
+                counts["one_word_species"] += bool(species) and " " not in species
+                batch.append((parts[0], *(lineage.get(column) or MATRIX_BLANK for column, _ in LINEAGE_COLUMNS)))
+                if len(batch) >= 100000:
+                    connection.executemany("INSERT INTO ncbi_taxonomy_matrix_new VALUES (?,?,?,?,?,?,?,?)", batch)
+                    batch = []
+            connection.executemany("INSERT INTO ncbi_taxonomy_matrix_new VALUES (?,?,?,?,?,?,?,?)", batch)
+            reporter.info("Carrying retired taxids forward from merged.dmp...")
+            merged = [(parts[0], parts[1]) for parts in _dump_rows(tar, "merged.dmp") if len(parts) > 1]
+        connection.execute("CREATE TEMP TABLE merged (old TEXT PRIMARY KEY, new TEXT)")
+        connection.executemany("INSERT OR IGNORE INTO merged VALUES (?, ?)", merged)
+        cursor = connection.execute(
+            "INSERT OR IGNORE INTO ncbi_taxonomy_matrix_new SELECT merged.old, m.kingdom, m.phylum, m.class, "
+            "m.order_rank, m.family, m.genus, m.species FROM merged JOIN ncbi_taxonomy_matrix_new m ON m.tax_id = merged.new")
+        counts["merged"] = cursor.rowcount
+        connection.execute("DROP TABLE IF EXISTS ncbi_taxonomy_matrix")
+        connection.execute("ALTER TABLE ncbi_taxonomy_matrix_new RENAME TO ncbi_taxonomy_matrix")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_matrix_taxid ON ncbi_taxonomy_matrix(tax_id)")
+        connection.execute("CREATE TABLE IF NOT EXISTS library_notes (key TEXT PRIMARY KEY, value TEXT)")
+        connection.executemany("INSERT OR REPLACE INTO library_notes VALUES (?, ?)", [
+            ("taxonomy_source", f"NCBI new_taxdump: rankedlineage.dmp, nodes.dmp, merged.dmp ({Path(taxdump).name})"),
+            ("taxonomy_dumped", dumped),
+            ("taxonomy_rebuilt", datetime.date.today().isoformat()),
+            ("taxonomy_decision", "0042"),
+        ])
+        connection.commit()
+    finally:
+        connection.close()
+    reporter.info(f"Taxonomy matrix: {counts['rows']:,} nodes and {counts['merged']:,} retired taxids; "
+                  f"{counts['genus_rows']:,} genera, {counts['genera_with_a_species']:,} with a species; "
+                  f"{counts['one_word_species']:,} one-word "
+                  "species (names NCBI ranks as species, blanked where read, decision 0030).")
     return counts
 
 
