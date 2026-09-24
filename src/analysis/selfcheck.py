@@ -281,7 +281,7 @@ def run_selfcheck(library, species_list: SpeciesList, primers: amplicons.PrimerS
     floor = min(float(v) for v in config.min_identity.values())
     _say(reporter, f"Searching {len(query_of):,} distinct amplicons of {len(listed):,} listed species "
                    f"against the {primers.marker} volume, keeping hits at {floor:g}% or more, up to {cap:,} each...")
-    hits = _search(library, primers.marker, query_of, config, cap, threads, floor)
+    hits = _search(library, primers.marker, query_of, config, cap, threads, floor, reporter)
 
     subjects = {h["subject"] for group in hits.values() for h in group}
     lineages = library.lookup(subjects)
@@ -312,7 +312,7 @@ def run_selfcheck(library, species_list: SpeciesList, primers: amplicons.PrimerS
 
 
 def _search(library, marker: str, query_of: Dict[str, str], config, cap: int, threads: int,
-            floor: float) -> Dict[str, List[Dict]]:
+            floor: float, reporter=None) -> Dict[str, List[Dict]]:
     """
     One search of every distinct amplicon, as stage 4 searches reads, but
     keeping only hits at or above the lowest identity threshold. A hit
@@ -326,13 +326,17 @@ def _search(library, marker: str, query_of: Dict[str, str], config, cap: int, th
     work = Path(tempfile.mkdtemp(prefix="taxatag-selfcheck-"))
     try:
         query = work / "queries.fasta"
-        query.write_text("".join(f">{q}\n{s}\n" for s, q in query_of.items()), encoding="utf-8")
+        query.write_text("".join(f">{q}\n{s}\n" for s, q in sorted(query_of.items(), key=lambda i: int(i[1][1:]))),
+                         encoding="utf-8")
         output = work / "hits.tsv"
         searching = dataclasses.replace(config, blast_max_target_seqs=cap)
         if threads:
             searching.threads = threads
         command = _build_blast_command(searching, query, output, library.volume(marker).path)
-        result = run_tool(command + ["-perc_identity", f"{floor:g}"])
+        order = {q: n for n, q in enumerate(sorted(query_of.values(), key=lambda q: int(q[1:])), 1)}
+        result = run_tool(command + ["-perc_identity", f"{floor:g}"], reporter=reporter,
+                          progress=amplicons.blast_progress(output, order, "amplicons searched"),
+                          progress_seconds=amplicons.PROGRESS_SECONDS, stall_seconds=amplicons.STALL_SECONDS)
         if not result.ok:
             raise RuntimeError(f"the search did not finish: {result.tail(3)}")
         return _parse_blast_results(output)

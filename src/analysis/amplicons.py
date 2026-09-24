@@ -64,7 +64,49 @@ CAPTURE_FIELDS = "qseqid sseqid pident length qstart qend qlen sstart send slen 
 
 #: The format version of the table and its settings file. A change that
 #: alters what a cut is changes this, and every cached table is remade.
-FORMAT = 1
+FORMAT = 2
+
+#: The seeds are clustered to representatives before the rest are aligned
+#: to them. A seed's only job is to show where the amplicon lies in a
+#: record, and any homologous seed does that; aligning every record to all
+#: of them made the work grow as seeds x similar records. On 16S (60,160
+#: distinct seeds, a volume that is all 16S) it would have taken about 20
+#: hours. None keeps every seed. The identity was chosen by measurement
+#: against the full-seed cut of the 12S volume (decision 0040).
+SEED_CLUSTER_IDENTITY = 0.90
+
+#: A BLAST step that writes no new result for this long has stopped, and is
+#: ended rather than left to hang (Rudie, 24 September 2026: a long task is
+#: fine; one that stops without ending is not). BLAST writes its table a
+#: batch of queries at a time, and no batch here takes minutes, let alone
+#: half an hour; the whole step may take hours and is never cut short for that.
+STALL_SECONDS = 30 * 60
+PROGRESS_SECONDS = 5 * 60
+
+
+def blast_progress(output: Path, position: Dict[str, int], what: str):
+    """
+    A probe for `run_tool`: how far a BLAST search has got through its
+    queries, read from the last line of its table. BLAST takes the queries
+    in the order given, so the last query written says how far it is.
+    """
+    total = len(position)
+
+    def probe():
+        # No table yet is no progress yet, not an unreadable probe: a search
+        # that hangs before its first result must still count as stalled.
+        if not Path(output).exists():
+            return 0, f"  {what}: 0 of {total:,}"
+        with open(output, "rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 4096))
+            tail = handle.read().decode("utf-8", errors="replace").splitlines()
+        lines = [line for line in tail if line.strip()]
+        reached = position.get(lines[-1].split("\t", 1)[0], 0) if lines else 0
+        return reached, f"  {what}: {reached:,} of {total:,} ({100 * reached / max(1, total):.0f}%)"
+
+    return probe
 
 
 @dataclass(frozen=True)
@@ -186,7 +228,18 @@ def unique_seeds(seeds: Dict[str, Cut], out: Path) -> Path:
     return out
 
 
-def align_to_seeds(records: Path, seeds_fasta: Path, work: Path, threads: int = 1) -> Path:
+def representative_seeds(seeds_fasta: Path, identity: float, work: Path, threads: int = 1) -> Path:
+    """The seeds clustered by VSEARCH to one centroid per cluster at `identity`."""
+    centroids = work / "seed_centroids.fasta"
+    result = run_tool([str(get_bundled_bin("vsearch")), "--cluster_fast", str(seeds_fasta), "--id", f"{identity:g}",
+                       "--centroids", str(centroids), "--threads", str(max(1, threads)), "--quiet"])
+    if not result.ok:
+        raise RuntimeError(f"VSEARCH could not cluster the seeds: {result.tail(3)}")
+    return centroids
+
+
+def align_to_seeds(records: Path, seeds_fasta: Path, work: Path, threads: int = 1, reporter=None,
+                   order: Optional[Dict[str, int]] = None) -> Path:
     """Align every record to the seeds; the seeds are the database, since they are few."""
     database = work / "seeds"
     made = run_tool(
@@ -200,7 +253,9 @@ def align_to_seeds(records: Path, seeds_fasta: Path, work: Path, threads: int = 
         [str(get_bundled_bin("blastn")), "-task", "blastn", "-query", str(short_path(records.parent) / records.name),
          "-db", database.name, "-outfmt", f"6 {CAPTURE_FIELDS}", "-evalue", "1e-10",
          "-max_target_seqs", "5", "-max_hsps", "1", "-num_threads", str(max(1, threads)), "-out", table.name],
-        cwd=short_path(work),
+        cwd=short_path(work), reporter=reporter,
+        progress=blast_progress(table, order, "records aligned") if order else None,
+        progress_seconds=PROGRESS_SECONDS, stall_seconds=STALL_SECONDS,
     )
     if not searched.ok:
         raise RuntimeError(f"could not align the records to the seeds: {searched.tail(3)}")
@@ -258,7 +313,8 @@ def cut_by_alignment(alignments: Path, sequences: Dict[str, str], primers: Prime
 # ---------------------------------------------------------------- the whole volume
 
 
-def settings_for(library, primers: PrimerSet, min_coverage: float) -> Dict[str, object]:
+def settings_for(library, primers: PrimerSet, min_coverage: float,
+                 seed_identity: Optional[float] = SEED_CLUSTER_IDENTITY) -> Dict[str, object]:
     """What a cached table was made from; any difference means it is remade."""
     volume = library.volume(primers.marker).path
     files = sorted(volume.parent.glob(volume.name + ".*"))
@@ -274,6 +330,7 @@ def settings_for(library, primers: PrimerSet, min_coverage: float) -> Dict[str, 
         "window": [primers.min_len, primers.max_len],
         "error_rate": primers.error_rate,
         "min_coverage": min_coverage,
+        "seed_cluster_identity": seed_identity,
     }
 
 
@@ -282,7 +339,7 @@ def table_path(out_dir: Path, primers: PrimerSet) -> Path:
 
 
 def cut_volume(library, primers: PrimerSet, out_dir: Path, min_coverage: float, threads: int = 1,
-               reporter=None) -> Path:
+               reporter=None, seed_identity: Optional[float] = SEED_CLUSTER_IDENTITY) -> Path:
     """
     Cut every record of the locus's marker volume, and write the table.
 
@@ -293,7 +350,7 @@ def cut_volume(library, primers: PrimerSet, out_dir: Path, min_coverage: float, 
     out_dir.mkdir(parents=True, exist_ok=True)
     table = table_path(out_dir, primers)
     stamp = table.with_suffix(".json")
-    settings = settings_for(library, primers, min_coverage)
+    settings = settings_for(library, primers, min_coverage, seed_identity)
     if table.exists() and stamp.exists():
         try:
             if json.loads(stamp.read_text(encoding="utf-8")) == settings:
@@ -314,8 +371,20 @@ def cut_volume(library, primers: PrimerSet, out_dir: Path, min_coverage: float, 
         if not seeds:
             raise RuntimeError(f"no record carries both {primers.name} primer sites, so there is nothing to "
                                "align the rest to; is this the right locus for this volume?")
-        _say(reporter, f"  {len(seeds):,} carry both primer sites. Aligning the rest to them...")
-        alignments = align_to_seeds(records, unique_seeds(seeds, work / "unique_seeds.fasta"), work, threads)
+        distinct = unique_seeds(seeds, work / "unique_seeds.fasta")
+        if seed_identity:
+            distinct = representative_seeds(distinct, seed_identity, work, threads)
+        count = sum(1 for _ in read_fasta(distinct))
+        # A record already cut by its primers needs no alignment: that cut is kept either way.
+        rest, order = work / "rest.fasta", {}
+        with open(rest, "w", encoding="utf-8") as handle:
+            for name, sequence in sequences.items():
+                if name not in seeds:
+                    handle.write(f">{name}\n{sequence}\n")
+                    order[name] = len(order) + 1
+        _say(reporter, f"  {len(seeds):,} carry both primer sites ({count:,} representative seeds). "
+                       f"Aligning the other {len(sequences) - len(seeds):,} to them...")
+        alignments = align_to_seeds(rest, distinct, work, threads, reporter, order)
         aligned = cut_by_alignment(alignments, sequences, primers, min_coverage)
         cuts = {**aligned, **seeds}          # a primer cut is the better evidence, where there is one
         _write_table(table, sequences, cuts, species)

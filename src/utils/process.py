@@ -17,13 +17,21 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from src.utils.reporting import PipelineCancelled, Reporter
 
 
 class ToolTimeout(Exception):
     """Raised when a tool outlived the time it was given."""
+
+
+class ToolStalled(ToolTimeout):
+    """
+    Raised when a tool's own progress stopped advancing for longer than it
+    was allowed. Unlike a timeout, it says nothing about how long the work
+    may take - only that the work stopped moving.
+    """
 
 #: How long to wait for the output reader to finish after the process has
 #: exited. Anything still holding the pipe open past this is a stray worker,
@@ -78,6 +86,9 @@ def run_tool(
     heartbeat_seconds: float = 30.0,
     cwd: Optional[Path] = None,
     timeout_seconds: Optional[float] = None,
+    progress: Optional[Callable[[], Tuple[float, str]]] = None,
+    progress_seconds: float = 300.0,
+    stall_seconds: Optional[float] = None,
 ) -> ToolResult:
     """
     Run an external command, capturing its output.
@@ -98,6 +109,16 @@ def run_tool(
     and there is nothing for a retry to react to: the call simply does not
     end. Reaching the limit terminates the process and raises ToolTimeout, so
     the caller can retry or move on.
+
+    Pass `progress` for work that is long by nature - cutting a whole
+    reference volume can take hours - and should be judged by whether it
+    is still moving, not by how long it has taken (Rudie, 24 September
+    2026: a long task is fine; one that stops without ending is not). Every
+    `progress_seconds` it is asked for a number that grows as the work
+    advances and a sentence saying how far it is, and the sentence is
+    reported. With `stall_seconds`, a number that has not grown for that
+    long terminates the tool and raises ToolStalled. A probe that fails
+    tells nothing either way, so it neither reports nor counts as a stall.
     """
     command = [str(part) for part in command]
     started = time.monotonic()
@@ -159,6 +180,7 @@ def run_tool(
             pass
 
     last_heartbeat = started
+    last_probe, last_advance, furthest = started, started, None
     try:
         while True:
             try:
@@ -190,6 +212,24 @@ def run_tool(
             if heartbeat and reporter is not None and now - last_heartbeat >= heartbeat_seconds:
                 last_heartbeat = now
                 reporter.progress(None, f"{heartbeat} ({_elapsed(now - started)} so far)")
+
+            if progress is not None and now - last_probe >= progress_seconds:
+                last_probe = now
+                try:
+                    reached, said = progress()
+                except Exception:  # noqa: BLE001 - a probe that fails tells nothing either way
+                    last_advance = now
+                else:
+                    if furthest is None or reached > furthest:
+                        furthest, last_advance = reached, now
+                    if reporter is not None and said:
+                        reporter.info(f"{said} ({_elapsed(now - started)} so far)")
+                if stall_seconds is not None and now - last_advance > stall_seconds:
+                    _terminate(process)
+                    raise ToolStalled(
+                        f"stopped: no progress for {_elapsed(now - last_advance)} "
+                        f"(after {_elapsed(now - started)} in all)"
+                    )
     finally:
         process.wait()
         # The reader is given a moment to finish, then abandoned. It is a
