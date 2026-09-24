@@ -151,6 +151,31 @@ The file containing the results will be in its respective run folder as `05_resu
 one row per taxon, per sample, with the evidence beside it. The **"Save a copy of this table"** button writes
 whatever you are looking at, optional filters included.
 
+### 6. Analyse them
+
+The **Analysis** tab turns a finished run into the summaries a species table
+is usually taken elsewhere for. Choose an analysis from the list at **1** and
+press **Run** at **2**. Nothing is written until you press **Save** at **3**,
+which keeps the tables - and the chart, as a picture - in a dated folder
+inside the run, with a note of exactly how they were made.
+
+![The Analysis tab, showing whether sampling was enough](resources/screenshot-analysis.png)
+
+- **Diversity**: richness, Shannon and Simpson per sample; how different
+  samples are from each other; replicates pooled into sites from your sample
+  sheet; and whether sampling was enough, with a species accumulation curve.
+- **Species identification**: every close match for each sequence, ranked;
+  a review sheet listing each call with its evidence, for you to mark right
+  or wrong in a spreadsheet; and, from that filled sheet, how accurate the
+  names were at each rank.
+- **Reference library**: which species on your list the library has no
+  reference for, and so could never be named.
+
+An analysis that cannot run on your data is greyed out, and says why when
+you point at it or press Run; one that can but should be read with care is
+marked with a warning sign. The curve above, for example, is marked because
+this run was made with an older TaxaTag.
+
 A species table is something you read for a long time. If a white window is
 hard on your eyes, the **Display** group at the top of the Settings tab has a
 dark scheme, three text sizes, and a dyslexia-friendly font; by default

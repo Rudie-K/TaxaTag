@@ -21,7 +21,7 @@ read it.
 
 from __future__ import annotations
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 #: The permanent identity of the installed application on Windows.
 #:

@@ -35,7 +35,7 @@
 ; not lose it because they moved to a new version.
 
 #define AppName        "TaxaTag"
-#define AppVersion     "1.0.1"
+#define AppVersion     "1.1.0"
 #define AppPublisher   "Rudie Kauhanen"
 #define AppURL         "https://github.com/Rudie-K/TaxaTag"
 #define AppExeName     "TaxaTag.exe"

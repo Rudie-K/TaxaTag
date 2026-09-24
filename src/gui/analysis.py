@@ -361,6 +361,10 @@ class AnalysisPanel(QWidget):
             item = QListWidgetItem(f"{spec.title}\n{spec.subtitle}")
             item.setData(Qt.ItemDataRole.UserRole, spec.key)
             self.list.addItem(item)
+        # Wide enough for the longest line, so no subtitle needs a sideways scrollbar.
+        widest = max(self.list.fontMetrics().horizontalAdvance(line) for spec in workbench.SPECS
+                     for line in (f"{WARNING_SIGN} {spec.title}", spec.subtitle))
+        self.list.setMinimumWidth(widest + 48)
         self.preview = ChartWidget(preview=True)
         self.preview.clicked.connect(self._open_chart)
         self.preview_label = QLabel("Last chart")
