@@ -335,13 +335,20 @@ def read_candidates(run_dir: Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def write_audit(run_dir: Path, sheet: Path, out_dir: Optional[Path] = None) -> Dict[str, object]:
+def write_audit(run_dir: Path, sheet: Path, out_dir: Optional[Path] = None,
+                candidates: Optional[List[Dict[str, str]]] = None) -> Dict[str, object]:
     """
     Read a filled sheet, write the five tables beside it (or into
     `out_dir`), and return what was written and what was found.
+
+    `candidates` are the run's possible species, if the caller has them;
+    otherwise the run's own `06_analysis/candidates.csv` is read, as the
+    terminal always has. The Analysis tab computes them afresh, because a
+    result it saved lives in a dated folder of its own.
     """
     rows = adjudication_module.read_sheet(sheet)
-    candidates = read_candidates(run_dir)
+    given_candidates = candidates is not None
+    candidates = candidates if given_candidates else read_candidates(run_dir)
     families = _families(candidates)
     folder = out_dir or layout.analysis_dir(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
@@ -378,7 +385,9 @@ def write_audit(run_dir: Path, sheet: Path, out_dir: Optional[Path] = None) -> D
     (folder / "audit-sources.txt").write_text(
         "Where the audit numbers came from\n\n"
         f"sheet:       {sheet}\n"
-        f"candidates:  {layout.analysis_dir(run_dir) / 'candidates.csv'} ({'read' if candidates else 'absent - no top-k, families unknown'})\n"
+        + (f"candidates:  computed from the run and its library ({len(candidates)} rows)\n" if given_candidates else
+           f"candidates:  {layout.analysis_dir(run_dir) / 'candidates.csv'} ({'read' if candidates else 'absent - no top-k, families unknown'})\n")
+        +
         "definitions: Bourret et al. 2023 after Bokulich et al. 2018; per rank; two scopes (all judged rows, genuine detections)\n"
         "confident:   a species-rank call with no ambiguity flag (is_confident, src/analysis/metrics.py)\n"
         f"corroborated: confident, with at least {CORROBORATED_REFERENCES} matching references - the stricter reading, reported beside\n",

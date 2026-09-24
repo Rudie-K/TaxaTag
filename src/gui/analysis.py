@@ -286,6 +286,9 @@ class AnalysisPanel(QWidget):
         self._output_base: Optional[Path] = None
         self._sheet_path: Optional[Path] = None
         self._sheet: Optional[sites.SampleSheet] = None
+        self._library = None                       # the chosen run's own reference library
+        self._species_list = None
+        self._review_sheet: Optional[Path] = None
         self._outcomes: Dict[str, workbench.Outcome] = {}
         self._statuses: Dict[str, tuple] = {}
         self._chart_outcome: Optional[workbench.Outcome] = None
@@ -320,11 +323,28 @@ class AnalysisPanel(QWidget):
         self.marker_picker.currentIndexChanged.connect(lambda _: self._context_changed(keep_markers=True))
         self.sample_column_label = QLabel("Sample column")
         self.site_column_label = QLabel("Site column")
-        for widget in (QLabel("Run"), self.run_picker, QLabel("Sample sheet"), self.sheet_label, self.sheet_button,
-                       self.sheet_clear, self.sample_column_label, self.sample_column, self.site_column_label,
-                       self.site_column, QLabel("Marker"), self.marker_picker):
+        for widget in (QLabel("Run"), self.run_picker, QLabel("Marker"), self.marker_picker):
             bar.addWidget(widget)
         bar.addStretch(1)
+
+        # What the run is read against, on a row of its own: the two sheets
+        # and their columns would not fit beside the run on a laptop screen.
+        self.list_label = QLabel("None")
+        self.list_button = QPushButton("Choose…")
+        self.list_button.setAccessibleName("Choose a species list")
+        self.list_button.setToolTip("A CSV of the species that could be there, with a ScientificName column and, "
+                                    "if you have them, Synonyms and Habitat.")
+        self.list_button.clicked.connect(self._choose_list)
+        self.list_clear = QPushButton("Clear")
+        self.list_clear.setAccessibleName("Clear the species list")
+        self.list_clear.clicked.connect(lambda: self.set_species_list(None))
+        inputs = QHBoxLayout()
+        inputs.setSpacing(8)
+        for widget in (QLabel("Sample sheet"), self.sheet_label, self.sheet_button, self.sheet_clear,
+                       self.sample_column_label, self.sample_column, self.site_column_label, self.site_column,
+                       QLabel("Species list"), self.list_label, self.list_button, self.list_clear):
+            inputs.addWidget(widget)
+        inputs.addStretch(1)
 
         # The list, and the preview of the last chart at its foot.
         self.list = QListWidget()
@@ -378,7 +398,14 @@ class AnalysisPanel(QWidget):
         self.run_button.clicked.connect(self.run_selected)
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self._save_clicked)
-        for widget in (QLabel("Taxonomic rank"), self.rank_picker, self.contaminants, self.seed_label, self.seed):
+        self.rank_label = QLabel("Taxonomic rank")
+        self.review_label = QLabel("Filled review sheet")
+        self.review_name = QLabel("None")
+        self.review_button = QPushButton("Choose…")
+        self.review_button.setAccessibleName("Choose a filled review sheet")
+        self.review_button.clicked.connect(self._choose_review_sheet)
+        for widget in (self.rank_label, self.rank_picker, self.contaminants, self.seed_label, self.seed,
+                       self.review_label, self.review_name, self.review_button):
             options.addWidget(widget)
         options.addStretch(1)
         options.addWidget(self.run_button)
@@ -448,9 +475,11 @@ class AnalysisPanel(QWidget):
 
         outer = QVBoxLayout(self)
         outer.addLayout(bar)
+        outer.addLayout(inputs)
         outer.addWidget(splitter, 1)
         outer.addLayout(status_row)
         self._set_sheet_widgets()
+        self._set_list_widgets()
         self._refresh_preview()
 
     # ------------------------------------------------------------ the run bar
@@ -515,6 +544,46 @@ class AnalysisPanel(QWidget):
         self._set_sheet_widgets()
         self._load_sheet()
 
+    def _choose_list(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Choose a species list", str(self._output_base or ""),
+                                              "Species lists (*.csv);;All files (*)")
+        if path:
+            self.set_species_list(Path(path))
+
+    def set_species_list(self, path: Optional[Path]) -> None:
+        from src.analysis.adjudication import SpeciesList
+
+        self._species_list = None
+        if path:
+            try:
+                loaded = SpeciesList.load(Path(path))
+            except (OSError, UnicodeDecodeError, ValueError) as problem:
+                self._say(f"That species list could not be read: {problem}", warning=True)
+            else:
+                if loaded.accepted:
+                    self._species_list = loaded
+                else:
+                    self._say("That file names no species: it needs a ScientificName column.", warning=True)
+        self._set_list_widgets()
+        self._context_changed(keep_markers=True)
+
+    def _set_list_widgets(self) -> None:
+        chosen = self._species_list
+        self.list_label.setText(f"{Path(chosen.source).name} ({len(chosen.accepted):,} species)" if chosen else "None")
+        self.list_clear.setVisible(chosen is not None)
+
+    def _choose_review_sheet(self) -> None:
+        start = str(self.run_dir() or self._output_base or "")
+        path, _ = QFileDialog.getOpenFileName(self, "Choose a filled review sheet", start,
+                                              "Review sheets (*.csv);;All files (*)")
+        if path:
+            self.set_review_sheet(Path(path))
+
+    def set_review_sheet(self, path: Optional[Path]) -> None:
+        self._review_sheet = Path(path) if path else None
+        self.review_name.setText(self._review_sheet.name if self._review_sheet else "None")
+        self._context_changed(keep_markers=True)
+
     def _set_sheet_widgets(self) -> None:
         chosen = self._sheet_path is not None
         self.sheet_label.setText(self._sheet_path.name if chosen else "None")
@@ -543,11 +612,16 @@ class AnalysisPanel(QWidget):
         if run_dir is None:
             return None
         return workbench.Context(run_dir, self.marker_picker.currentData() or "", self._sheet,
-                                 self.rank_picker.currentData(), self.contaminants.isChecked(), self.seed.value())
+                                 self.rank_picker.currentData(), self.contaminants.isChecked(), self.seed.value(),
+                                 self._library, self._species_list, self._review_sheet)
 
     def _context_changed(self, keep_markers: bool = False) -> None:
         run_dir = self.run_dir()
         if not keep_markers:
+            # The library the run was searched against, as the terminal finds it.
+            if self._library is not None:
+                self._library.close()
+            self._library = workbench.library_for(run_dir) if run_dir else None
             self.marker_picker.blockSignals(True)
             self.marker_picker.clear()
             for locus in (workbench.loci(run_dir) if run_dir else []):
@@ -614,9 +688,13 @@ class AnalysisPanel(QWidget):
 
     def _show_selected(self) -> None:
         spec = self.selected_spec()
-        is_effort = spec is not None and spec.chart
-        self.seed.setVisible(is_effort)
-        self.seed_label.setVisible(is_effort)
+        uses = spec.options if spec is not None else ()
+        for widgets, option in (((self.rank_label, self.rank_picker), "rank"), ((self.contaminants,), "contaminants"),
+                                ((self.seed_label, self.seed), "seed")):
+            for widget in widgets:
+                widget.setVisible(option in uses)
+        for widget in (self.review_label, self.review_name, self.review_button):
+            widget.setVisible(spec is not None and spec.needs_review)
         outcome = self._outcomes.get(spec.key) if spec else None
         self.run_button.setEnabled(spec is not None and self.run_dir() is not None and self._worker is None)
         self.save_button.setEnabled(outcome is not None and outcome.saved_to is None)
@@ -772,3 +850,5 @@ class AnalysisPanel(QWidget):
         """Before the window closes: finish any running analysis and remove unsaved working folders."""
         self.wait_for_run()
         self._forget_results()
+        if self._library is not None:
+            self._library.close()

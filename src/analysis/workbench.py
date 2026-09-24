@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from src.analysis import diversity, effort, readiness, sites
+from src.analysis import adjudication, candidates, coverage, diversity, effort, metrics, readiness, sites
 from src.pipeline import layout
 
 #: The status words `readiness.status` gives, plus the reasons behind them.
@@ -47,6 +47,9 @@ class Context:
     basis: str = diversity.MIXED
     keep_contaminants: bool = False
     seed: int = effort.SEED
+    library: object = None                                   # the run's own reference library
+    species_list: Optional[adjudication.SpeciesList] = None
+    review_sheet: Optional[Path] = None                      # a filled review sheet, for accuracy
 
 
 @dataclass
@@ -84,12 +87,16 @@ class Spec:
     title: str
     subtitle: str
     group: str
-    affects: str
+    affects: Optional[str]                      # readiness's scope; None for what reads no run's names
     tooltip: str
     needs_sheet: bool
     writer: Callable[[Context, Path], Dict[str, object]]
     shown: Tuple[Tuple[str, str], ...]          # (label, table name) in the order offered
     chart: bool = False
+    needs_list: bool = False
+    needs_review: bool = False
+    needs_library: bool = False
+    options: Tuple[str, ...] = ("rank", "contaminants")   # which of the options row it uses
 
 
 # ---------------------------------------------------------------- the analyses
@@ -109,7 +116,50 @@ def _write_effort(context: Context, folder: Path):
                                out_dir=folder, seed=context.seed)
 
 
+def _write_possible_species(context: Context, folder: Path):
+    path = candidates.write_candidates(context.run_dir, context.library, out_dir=folder)
+    return {"written": [path], "tables": {"candidates": candidates.read_table(path)}, "findings": []}
+
+
+def _write_review_sheet(context: Context, folder: Path):
+    path = adjudication.write_sheet(context.run_dir, context.library, context.species_list, out_dir=folder)
+    return {"written": [path], "tables": {"sheet": adjudication.read_sheet(path)}, "findings": []}
+
+
+def _write_accuracy(context: Context, folder: Path):
+    # The run's possible species, computed afresh: a saved result lives in
+    # a dated folder of its own, not where the terminal would look.
+    possible = candidates.candidate_rows(context.run_dir, context.library) if context.library else []
+    result = metrics.write_audit(context.run_dir, Path(context.review_sheet), folder, possible)
+    tables = {name: _read_csv(path) for name, path in result["written"].items()}
+    (folder / "accuracy-notes.txt").write_text(
+        f"Rows on the sheet: {result['rows']}; not yet judged: {result['unjudged']}.\n"
+        f"Confident species calls: {result['confident']}; of those, wrong: "
+        f"{sum(result['confident_but_wrong'].values())} "
+        f"({result['confident_but_wrong'][metrics.CAUSE_MISASSIGNED]} misassigned, "
+        f"{result['confident_but_wrong'][metrics.CAUSE_FOREIGN]} foreign DNA).\n"
+        "Rows not yet judged are left out of every number.\n",
+        encoding="utf-8")
+    return {"written": list(result["written"].values()), "tables": tables, "findings": []}
+
+
+def _write_gaps(context: Context, folder: Path):
+    markers = sorted(set(marker_by_locus(context.run_dir).values()))
+    path = folder / "coverage.csv"
+    rows = coverage.write_coverage(context.library, context.species_list, markers, path)
+    return {"written": [path], "tables": {"coverage": rows}, "findings": []}
+
+
+def _read_csv(path: Path) -> List[Dict[str, str]]:
+    import csv
+
+    with open(path, encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
 DIVERSITY = "Diversity"
+IDENTIFICATION = "Species identification"
+LIBRARY = "Reference library"
 
 SPECS: Tuple[Spec, ...] = (
     Spec("alpha_diversity", "Alpha diversity", "richness, Shannon, Simpson", DIVERSITY, readiness.DIVERSITY,
@@ -124,12 +174,38 @@ SPECS: Tuple[Spec, ...] = (
     Spec("species_accumulation", "Species accumulation", "sampling effort, Chao2", DIVERSITY, readiness.EFFORT,
          "Whether sampling was enough: taxa expected from fewer or more samples, and an estimate of those missed.",
          False, _write_effort,
-         (("Summary", "summary"), ("Curve", "curve"), ("Sites at equal effort", "sites")), chart=True),
+         (("Summary", "summary"), ("Curve", "curve"), ("Sites at equal effort", "sites")), chart=True,
+         options=("rank", "contaminants", "seed")),
+    Spec("possible_species", "Possible species", "every close match, ranked", IDENTIFICATION, readiness.NAMES,
+         "For each sequence, the references it matched best, ranked, with how many references each species "
+         "has - where a call could have gone another way.",
+         False, _write_possible_species, (("Candidates", "candidates"),), needs_library=True, options=()),
+    Spec("review_sheet", "Review sheet", "each call with its evidence", IDENTIFICATION, readiness.NAMES,
+         "One row per call with its evidence beside it, and empty Outcome and Detection columns for you to "
+         "fill. Save it, fill it in a spreadsheet, then choose it for identification accuracy. A species list "
+         "adds whether each name is on it, and its habitat.",
+         False, _write_review_sheet, (("Calls", "sheet"),), needs_library=True, options=()),
+    Spec("identification_accuracy", "Identification accuracy", "precision and accuracy by rank", IDENTIFICATION,
+         readiness.NAMES,
+         "Precision and accuracy at each rank from a filled review sheet, as Bourret et al. (2023) define "
+         "them, and the confident calls your review found wrong.",
+         False, _write_accuracy,
+         (("By rank", "metrics"), ("By sample", "by_sample"), ("What stopped short", "breakdown"),
+          ("Top matches", "top_k"), ("Confident but wrong", "confident_but_wrong"), ("Could be either", "could_be")),
+         needs_review=True, needs_library=True, options=()),
+    Spec("reference_gaps", "Reference gaps", "species on your list with no reference", LIBRARY, None,
+         "Which species on your list the library holds a reference for on each marker, only a relative of, or "
+         "nothing. A species with no reference cannot be named, however good the sequencing.",
+         False, _write_gaps, (("By species", "coverage"),), needs_list=True, needs_library=True, options=()),
 )
 
 BY_KEY = {spec.key: spec for spec in SPECS}
 
 NEEDS_A_SHEET = "Choose a sample sheet in the bar above: sites are pooled from it."
+NEEDS_A_LIST = "Choose a species list in the bar above: it says which species to look for."
+NEEDS_A_FILLED_SHEET = ("Choose a filled review sheet above: save the Review sheet, fill in its Outcome and "
+                        "Detection columns, then choose it here.")
+NEEDS_THE_LIBRARY = "The reference library this run was searched against could not be found on this computer."
 
 
 # ---------------------------------------------------------------- what can run
@@ -138,6 +214,31 @@ NEEDS_A_SHEET = "Choose a sample sheet in the bar above: sites are pooled from i
 def loci(run_dir: Path) -> List[str]:
     """The markers a run's species table holds, in order."""
     return sorted({row.get("Locus", "") for row in diversity.read_table(run_dir) if row.get("Locus")})
+
+
+def marker_by_locus(run_dir: Path) -> Dict[str, str]:
+    """Each primer set in the run, to the marker gene it amplifies."""
+    return {row["Locus"]: row.get("Marker", "") for row in diversity.read_table(run_dir) if row.get("Locus")}
+
+
+def library_for(run_dir: Path):
+    """
+    The reference library a run was searched against, from its own record
+    of its settings, as the terminal finds it; None if it is not on this
+    computer any more.
+    """
+    import yaml
+
+    from src.reference.library import ReferenceLibrary
+
+    used = Path(run_dir) / "config_used.yaml"
+    try:
+        settings = yaml.safe_load(used.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    folder = (settings.get("paths") or {}).get("reference_dir") or ""
+    library = ReferenceLibrary(Path(folder)) if folder else None
+    return library if library is not None and library.exists else None
 
 
 def statuses(context: Context) -> Dict[str, Tuple[str, List[str]]]:
@@ -149,8 +250,15 @@ def statuses(context: Context) -> Dict[str, Tuple[str, List[str]]]:
     findings = readiness.check(context.run_dir, context.sheet, context.basis, context.keep_contaminants)
     result = {}
     for spec in SPECS:
-        if spec.needs_sheet and context.sheet is None:
-            result[spec.key] = (readiness.BLOCKED, [NEEDS_A_SHEET])
+        missing = ([NEEDS_A_SHEET] if spec.needs_sheet and context.sheet is None else []) \
+            + ([NEEDS_THE_LIBRARY] if spec.needs_library and context.library is None else []) \
+            + ([NEEDS_A_LIST] if spec.needs_list and context.species_list is None else []) \
+            + ([NEEDS_A_FILLED_SHEET] if spec.needs_review and not context.review_sheet else [])
+        if missing:
+            result[spec.key] = (readiness.BLOCKED, missing)
+            continue
+        if spec.affects is None:
+            result[spec.key] = (AVAILABLE, [])
             continue
         state = readiness.state(findings, spec.affects, context.locus)
         relevant = [f for f in findings if f.condition.affects in (spec.affects, readiness.NAMES)
@@ -176,13 +284,30 @@ def run(spec: Spec, context: Context) -> Outcome:
     written = spec.writer(context, staged)
     raw = written["tables"]
     tables = []
+    marker = marker_by_locus(context.run_dir).get(context.locus, "")
     for label, name in spec.shown:
-        rows = [row for row in raw.get(name, []) if not context.locus or row.get("Locus") == context.locus]
         if name not in raw or (spec.key == "species_accumulation" and name == "sites" and context.sheet is None):
             continue
+        rows = _for_the_marker(raw.get(name, []), context.locus, marker)
         tables.append(Table(label, _columns(rows), rows))
-    notes = "\n\n".join(path.read_text(encoding="utf-8") for path in sorted(staged.glob("*notes*.txt")))
+    note_files = sorted(set(staged.glob("*notes*.txt")) | set(staged.glob("*sources*.txt")))
+    notes = "\n\n".join(path.read_text(encoding="utf-8") for path in note_files)
     return Outcome(spec, context, tables, notes, written["findings"], staged)
+
+
+def _for_the_marker(rows: List[Dict[str, object]], locus: str, marker: str) -> List[Dict[str, object]]:
+    """
+    One marker at a time (decision 0039): by primer set where a table names
+    one, by marker gene where it names only that, and whole where it names
+    neither - an accuracy table is over the whole review sheet.
+    """
+    if not locus or not rows:
+        return list(rows)
+    if "Locus" in rows[0]:
+        return [row for row in rows if row.get("Locus") == locus]
+    if "Marker" in rows[0] and marker:
+        return [row for row in rows if row.get("Marker") == marker]
+    return list(rows)
 
 
 def _columns(rows: List[Dict[str, object]]) -> List[str]:
@@ -239,9 +364,12 @@ def save(outcome: Outcome, destination: Path) -> Path:
             "sample_column": context.sheet.sample_column,
             "site_column": context.sheet.site_column,
         },
-        "rank": context.basis,
-        "keep_contaminants": context.keep_contaminants,
-        "seed": context.seed if outcome.spec.writer is _write_effort else None,
+        "rank": context.basis if "rank" in outcome.spec.options else None,
+        "keep_contaminants": context.keep_contaminants if "contaminants" in outcome.spec.options else None,
+        "seed": context.seed if "seed" in outcome.spec.options else None,
+        "library": str(getattr(context.library, "root", "")) or None,
+        "species_list": getattr(context.species_list, "source", None),
+        "review_sheet": str(context.review_sheet) if context.review_sheet else None,
         "files": sorted(p.name for p in destination.iterdir()),
     }
     (destination / "analysis_settings.json").write_text(json.dumps(settings, indent=1), encoding="utf-8")

@@ -286,13 +286,16 @@ def build_sheet(run_dir: Path, library, species_list: Optional[SpeciesList] = No
     return sheet
 
 
-def write_sheet(run_dir: Path, library, species_list: Optional[SpeciesList] = None) -> Path:
+def write_sheet(run_dir: Path, library, species_list: Optional[SpeciesList] = None,
+                out_dir: Optional[Path] = None) -> Path:
     """
-    Write `06_analysis/adjudication.csv`. Refuses to overwrite a sheet that
-    has outcomes in it: a filled sheet is somebody's work, and a rebuild
-    must not blank it. Delete or rename it deliberately to start again.
+    Write `adjudication.csv` - into the run's `06_analysis/`, or into
+    `out_dir` (the Analysis tab's working folder, decision 0039). Refuses to
+    overwrite a sheet that has outcomes in it: a filled sheet is somebody's
+    work, and a rebuild must not blank it. Delete or rename it deliberately
+    to start again.
     """
-    folder = layout.analysis_dir(run_dir)
+    folder = Path(out_dir) if out_dir else layout.analysis_dir(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "adjudication.csv"
     if path.exists() and any(r.get(c) for r in read_sheet(path) for c in DECISION_COLUMNS):

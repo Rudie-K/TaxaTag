@@ -261,10 +261,13 @@ def candidate_rows(run_dir: Path, library, top_n: int = TOP_N,
     return rows
 
 
-def write_candidates(run_dir: Path, library, top_n: int = TOP_N) -> Path:
-    """Write `06_analysis/candidates.csv` and return its path."""
+def write_candidates(run_dir: Path, library, top_n: int = TOP_N, out_dir: Optional[Path] = None) -> Path:
+    """
+    Write `candidates.csv` - into the run's `06_analysis/`, or into `out_dir`
+    (the Analysis tab's working folder, decision 0039) - and return its path.
+    """
     rows = candidate_rows(run_dir, library, top_n)
-    folder = layout.analysis_dir(run_dir)
+    folder = Path(out_dir) if out_dir else layout.analysis_dir(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "candidates.csv"
     # LF, as every table TaxaTag writes for other tools to read (0022's
