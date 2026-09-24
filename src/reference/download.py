@@ -149,11 +149,16 @@ AVAILABLE: Dict[str, DownloadableLibrary] = {
             "offline, in seconds rather than hours."
         ),
         # Both measured rather than estimated: the archive is the size
-        # GitHub reports for the asset, and the installed figure is the 58
+        # GitHub reports for the asset, and the installed figure is the 55
         # files it unpacks to. They differ by more than three times, which
         # is why `enough_space` asks for the second and not the first.
-        size_bytes=653_221_716,
-        installed_bytes=2_092_398_010,
+        #
+        # Edition 2026-09-24: the first edition with 0028's names, 0041's
+        # genes and 0042's taxonomy (`docs/changelog/library-marine-core-
+        # 2026-09-24.md`). Whoever installed the first edition is offered
+        # this one, because `updates.library_updates` compares checksums.
+        size_bytes=665_532_526,
+        installed_bytes=2_182_326_747,
         sources=("MIDORI2", "MitoFish", "BOLD", "PR2", "NCBI"),
         # Hosted as a release asset rather than a committed file: GitHub
         # refuses any tracked file over 100 MB, while a release asset may
@@ -161,15 +166,15 @@ AVAILABLE: Dict[str, DownloadableLibrary] = {
         # so whatever fetches it must follow redirects.
         url=(
             "https://github.com/Rudie-K/TaxaTag-additional-content"
-            "/releases/download/marine-core/taxatag-marine-core-v1.0.0.zip"
+            "/releases/download/v1.1.0-marine-core/taxatag-marine-core-2026-09-24.zip"
         ),
-        sha256="83e1f983d3254a79f0a1048e825bf3eb6b16d7305e84978cdbd1abcf4017c20d",
+        sha256="6a828dffaa081dda58922f278062097b3850e8a93e85a5be5f7edd0ad80c8f5f",
         # No Zenodo deposit yet, so no DOI to cite. The landing page is
         # somewhere a reader can at least see what the archive contains.
         doi="",
         landing_page=(
             "https://github.com/Rudie-K/TaxaTag-additional-content"
-            "/releases/tag/marine-core"
+            "/releases/tag/v1.1.0-marine-core"
         ),
     ),
 }
