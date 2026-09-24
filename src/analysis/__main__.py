@@ -7,6 +7,8 @@ be described there too.
     python -m src.analysis adjudication <run folder> [--species-list <csv>] [--library <folder>]
     python -m src.analysis metrics <run folder> [--sheet <filled csv>] [--out <folder>]
     python -m src.analysis coverage --library <folder> --species-list <csv> [--out <csv>] [--markers 12S 16S]
+    python -m src.analysis amplicons --library <folder> --locus MiFish_12S --out <folder> [--config <yaml>]
+    python -m src.analysis selfcheck --library <folder> --species-list <csv> --locus MiFish_12S --out <folder> [--config <yaml>]
     python -m src.analysis check <run folder> [--sample-sheet <csv> ...] [--rank ...] [--keep-contaminants]
     python -m src.analysis diversity <run folder> [--rank species|genus|family] [--keep-contaminants] [--out <folder>]
     python -m src.analysis effort <run folder> [--sample-sheet <csv> ...] [--seed N] [--out <folder>]
@@ -30,6 +32,7 @@ from pathlib import Path
 import yaml
 
 from src.analysis import adjudication as adjudication_module
+from src.analysis import amplicons as amplicons_module
 from src.analysis import candidates as candidates_module
 from src.analysis import coverage as coverage_module
 from src.analysis import diversity as diversity_module
@@ -90,6 +93,55 @@ def _state_word(where: dict) -> str:
     return "ok" + (f" ({', '.join(bits)})" if bits else "")
 
 
+def _library_options(sub) -> None:
+    """What `amplicons` and `selfcheck` share: a library, a primer set from a configuration, and a folder."""
+    sub.add_argument("--library", type=Path, required=True, help="a TaxaTag reference library folder")
+    sub.add_argument("--locus", required=True, help="the primer set, by its name in the configuration (e.g. MiFish_12S)")
+    sub.add_argument("--out", type=Path, required=True, help="a folder for the tables; the amplicon table is kept there and reused")
+    sub.add_argument("--config", type=Path, help="the configuration whose primers and thresholds to use (default: the program's own)")
+    sub.add_argument("--threads", type=int, default=0, help="threads for Cutadapt and BLAST (default: the configuration's)")
+
+
+def _library_command(args) -> int:
+    from src.analysis import selfcheck as selfcheck_module
+    from src.pipeline.config import PipelineConfig
+    from src.utils.platform import app_root
+    from src.utils.reporting import console_reporter
+
+    library = ReferenceLibrary(args.library.resolve())
+    if not library.exists:
+        print(f"no reference library at {args.library}", file=sys.stderr)
+        return 2
+    config_path = args.config or app_root() / "resources" / "default_config.yaml"
+    config = PipelineConfig.from_yaml(config_path)
+    locus = next((l for l in config.loci if l.get("name") == args.locus), None)
+    if locus is None:
+        names = ", ".join(l.get("name", "") for l in config.loci)
+        print(f"no primer set called {args.locus} in {config_path}; it has: {names}", file=sys.stderr)
+        return 2
+    primers = amplicons_module.PrimerSet.from_locus(locus)
+    threads = args.threads or config.resolve_threads()
+    reporter = console_reporter()
+    if args.command == "amplicons":
+        table = amplicons_module.cut_volume(library, primers, args.out.resolve(), float(config.min_query_coverage),
+                                            threads, reporter)
+        counts = amplicons_module.summarise(amplicons_module.read_table(table))
+        print(f"Wrote {table}")
+        print(f"  {counts['primers']:,} cut between the primers, {counts['aligned']:,} by alignment, "
+              f"{counts['not cut']:,} not cut")
+        return 0
+    species_list = adjudication_module.SpeciesList.load(args.species_list.resolve())
+    result = selfcheck_module.run_selfcheck(library, species_list, primers, config, args.out.resolve(), threads,
+                                            reporter)
+    print(f"Wrote {result['species']}")
+    print(f"  and {result['records']}")
+    for test, counts in result["totals"].items():
+        total = sum(counts.values()) or 1
+        print(f"  {test}: " + ", ".join(f"{counts.get(o, 0):,} {o} ({100 * counts.get(o, 0) / total:.1f}%)"
+                                         for o in selfcheck_module.OUTCOMES))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m src.analysis", description=__doc__.strip().splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -115,11 +167,19 @@ def main(argv: list[str] | None = None) -> int:
     div.add_argument("--out", type=Path, help="write the tables here instead of into the run's 06_analysis/")
     chk = commands.add_parser("check", help="what each analysis would be on this run - available, warned or blocked - writing nothing")
     _run_options(chk)
+    amp = commands.add_parser("amplicons", help="every record of a marker volume cut to the amplicon a primer set reads (needs no run)")
+    _library_options(amp)
+    sel = commands.add_parser("selfcheck", help="the library tested with its own references: leave one out, and novel species (needs no run)")
+    _library_options(sel)
+    sel.add_argument("--species-list", type=Path, required=True, help="a CSV of species: ScientificName, optional Synonyms")
     eff = commands.add_parser("effort", help="was sampling enough: accumulation curves, Chao2 and coverage, with bootstrap intervals")
     _run_options(eff)
     eff.add_argument("--seed", type=int, default=effort_module.SEED, help="the bootstrap's random seed (default: %(default)s)")
     eff.add_argument("--out", type=Path, help="write the tables here instead of into the run's 06_analysis/")
     args = parser.parse_args(argv)
+
+    if args.command in ("amplicons", "selfcheck"):
+        return _library_command(args)
 
     if args.command == "coverage":
         library = ReferenceLibrary(args.library.resolve())

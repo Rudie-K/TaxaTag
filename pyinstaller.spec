@@ -195,6 +195,7 @@ hiddenimports += ["src.validation", "src.validation.selftest"]
 hiddenimports += ["src.analysis", "src.analysis.candidates", "src.analysis.adjudication", "src.analysis.metrics",
                   "src.analysis.coverage", "src.analysis.diversity", "src.analysis.sites",
                   "src.analysis.readiness", "src.analysis.effort", "src.analysis.workbench",
+                  "src.analysis.amplicons", "src.analysis.selfcheck",
                   "src.analysis.__main__"]
 
 #: The same reasoning, and here the cost of being wrong is higher. The
