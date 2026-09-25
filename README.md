@@ -151,7 +151,7 @@ The file containing the results will be in its respective run folder as `05_resu
 one row per taxon, per sample, with the evidence beside it. The **"Save a copy of this table"** button writes
 whatever you are looking at, optional filters included.
 
-### 6. Analyse them
+### 6. Analyse results *Experimental
 
 The **Analysis** tab turns a finished run into the summaries a species table
 is usually taken elsewhere for. Choose an analysis from the list at **1** and
