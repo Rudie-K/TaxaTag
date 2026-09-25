@@ -850,6 +850,14 @@ class AnalysisPanel(QWidget):
             for locus in (workbench.loci(run_dir) if run_dir else []):
                 self.marker_picker.addItem(locus, locus)
             self.marker_picker.blockSignals(False)
+            unfound = workbench.unfound_loci(run_dir) if run_dir else []
+            note = ""
+            if unfound:
+                named = " and ".join(unfound)
+                note = (f"{named} {'was' if len(unfound) == 1 else 'were'} looked for in this run but found in no "
+                        f"sample, so only markers with results are listed. Check the reads are the ones you meant.")
+                self._say(note)
+            self.marker_picker.setToolTip(note)
         self._forget_results()
         context = self.context()
         try:
@@ -964,7 +972,14 @@ class AnalysisPanel(QWidget):
         self._show_table()
         curve = workbench.accumulation_curve(outcome)
         self.chart.set_curve(curve, self._caption(outcome))
-        self.result_tabs.setTabEnabled(1, curve is not None)
+        # A tab with nothing in it is greyed and says why (Rudie, 25 September 2026).
+        present = (bool(outcome.tables), curve is not None, bool(outcome.notes.strip()))
+        why = ("This analysis wrote no table.", "This analysis draws no chart.", "This analysis wrote no notes.")
+        for tab, (has, reason) in enumerate(zip(present, why)):
+            self.result_tabs.setTabEnabled(tab, has)
+            self.result_tabs.setTabToolTip(tab, "" if has else reason)
+        if not self.result_tabs.isTabEnabled(self.result_tabs.currentIndex()):
+            self.result_tabs.setCurrentIndex(next((i for i, has in enumerate(present) if has), 0))
         self.notes.setPlainText(outcome.notes)
         self._say(f"Saved to {outcome.saved_to}" if outcome.saved_to else "Not saved yet.")
 

@@ -244,6 +244,27 @@ def loci(run_dir: Path) -> List[str]:
     return sorted({row.get("Locus", "") for row in diversity.read_table(run_dir) if row.get("Locus")})
 
 
+def unfound_loci(run_dir: Path) -> List[str]:
+    """
+    Primer sets the run looked for and found in no sample, from its trimming
+    summary. The marker menu lists only what has results, so without this a
+    primer set that was switched on and matched nothing simply vanished: the
+    1.1.0 test run of a folder named "MiFish_test" offered only MarVer3_16S,
+    because the folder held the 16S samples (24 September 2026).
+    """
+    import csv
+
+    summary = layout.report_csv(run_dir, "trimming")
+    try:
+        with open(summary, encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except OSError:
+        return []
+    looked_for = {row.get("Locus", "") for row in rows if row.get("Locus")}
+    found = {row.get("Locus", "") for row in rows if row.get("Status") == "OK"}
+    return sorted((looked_for - found) - set(loci(run_dir)))
+
+
 def marker_by_locus(run_dir: Path) -> Dict[str, str]:
     """Each primer set in the run, to the marker gene it amplifies."""
     return {row["Locus"]: row.get("Marker", "") for row in diversity.read_table(run_dir) if row.get("Locus")}

@@ -241,6 +241,14 @@ QTabBar::tab:hover:!selected {{
     color: {palette['text']};
 }}
 
+/* A tab that does not apply - the Analysis tab's Chart for a table-only
+   result - in the disabled colour, a step below the muted unselected
+   tabs, so it reads as unavailable rather than merely not chosen
+   (Rudie, 25 September 2026). */
+QTabBar::tab:disabled {{
+    color: {palette['text_disabled']};
+}}
+
 QGroupBox {{
     background-color: {palette['panel']};
     border: {px} solid {palette['border']};
